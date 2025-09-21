@@ -1378,7 +1378,6 @@ void
 free_cb(void *key, void *element)
 {
     remote_ctx_t *remote_ctx = (remote_ctx_t *)element;
-
     if (verbose) {
         LOGI("[udp] one connection freed");
     }

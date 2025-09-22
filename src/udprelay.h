@@ -53,6 +53,7 @@ typedef struct server_ctx {
     struct cache *conn_cache;
     const struct sockaddr *remote_addr;
     int remote_addr_len;
+    int fwmark;
 } server_ctx_t;
 
 typedef struct remote_ctx {

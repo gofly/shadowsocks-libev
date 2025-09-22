@@ -25,12 +25,10 @@
 #endif
 
 #include <string.h>
-#ifndef __MINGW32__
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <netinet/in.h>
-#endif
 
 #include <libcork/core.h>
 #include <libcork/os.h>
@@ -41,20 +39,12 @@
 
 #define CMD_RESRV_LEN 128
 
-#ifndef __MINGW32__
 #define TEMPDIR "/tmp/"
-#else
-#define TEMPDIR
-#endif
 
 static int exit_code;
 static struct cork_env *env        = NULL;
 static struct cork_exec *exec      = NULL;
 static struct cork_subprocess *sub = NULL;
-#ifdef __MINGW32__
-static uint16_t sub_control_port = 0;
-void cork_subprocess_set_control(struct cork_subprocess *self, uint16_t port);
-#endif
 
 static int
 plugin_log__data(struct cork_stream_consumer *vself,
@@ -224,9 +214,6 @@ start_obfsproxy(const char *plugin,
 
     cork_exec_set_env(exec, env);
     sub = cork_subprocess_new_exec(exec, NULL, NULL, &exit_code);
-#ifdef __MINGW32__
-    cork_subprocess_set_control(sub, sub_control_port);
-#endif
     ret = cork_subprocess_start(sub);
     ss_free(opts_dump);
     free(buf);
@@ -240,16 +227,11 @@ start_plugin(const char *plugin,
              const char *remote_port,
              const char *local_host,
              const char *local_port,
-#ifdef __MINGW32__
-             uint16_t control_port,
-#endif
              enum plugin_mode mode)
 {
-#ifndef __MINGW32__
     char *new_path = NULL;
     const char *current_path;
     size_t new_path_len;
-#endif
     int ret;
 
     if (plugin == NULL)
@@ -258,20 +240,14 @@ start_plugin(const char *plugin,
     if (strlen(plugin) == 0)
         return 0;
 
-#ifndef __MINGW32__
     /*
      * Add current dir to PATH, so we can search plugin in current dir
      */
     env          = cork_env_clone_current();
     current_path = cork_env_get(env, "PATH");
     if (current_path != NULL) {
-#ifdef HAVE_GET_CURRENT_DIR_NAME
         char *cwd = get_current_dir_name();
         if (cwd) {
-#else
-        char cwd[PATH_MAX];
-        if (getcwd(cwd, PATH_MAX) != NULL) {
-#endif
             new_path_len = strlen(current_path) + strlen(cwd) + 2;
             new_path     = ss_malloc(new_path_len);
             snprintf(new_path, new_path_len, "%s:%s", cwd, current_path);
@@ -282,9 +258,6 @@ start_plugin(const char *plugin,
     }
     if (new_path != NULL)
         cork_env_add(env, "PATH", new_path);
-#else
-    sub_control_port = control_port;
-#endif
 
     if (!strncmp(plugin, "obfsproxy", strlen("obfsproxy")))
         ret = start_obfsproxy(plugin, plugin_opts, remote_host, remote_port,
@@ -292,9 +265,7 @@ start_plugin(const char *plugin,
     else
         ret = start_ss_plugin(plugin, plugin_opts, remote_host, remote_port,
                               local_host, local_port, mode);
-#ifndef __MINGW32__
     ss_free(new_path);
-#endif
     env = NULL;
     return ret;
 }
@@ -334,11 +305,9 @@ stop_plugin()
 {
     if (sub != NULL) {
         cork_subprocess_abort(sub);
-#ifndef __MINGW32__
         if (cork_subprocess_wait(sub) == -1) {
             LOGI("error on terminating the plugin.");
         }
-#endif
         cork_subprocess_free(sub);
     }
 }

@@ -27,14 +27,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#ifndef __MINGW32__
 #include <unistd.h>
 #include <errno.h>
 #include <pwd.h>
 #include <grp.h>
-#else
-#include <malloc.h>
-#endif
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -60,15 +56,12 @@ FILE *logfile;
 int use_syslog = 0;
 #endif
 
-#ifndef __MINGW32__
 void
 ERROR(const char *s)
 {
     char *msg = strerror(errno);
     LOGE("%s: %s", s, msg);
 }
-
-#endif
 
 int use_tty = 1;
 
@@ -110,7 +103,6 @@ ss_isnumeric(const char *s)
 int
 run_as(const char *user)
 {
-#ifndef __MINGW32__
     if (user[0]) {
         /* Convert user to a long integer if it is a non-negative number.
          * -1 means it is a user name. */
@@ -204,9 +196,6 @@ run_as(const char *user)
         }
 #endif
     }
-#else
-    LOGE("run_as(): not implemented in MinGW port");
-#endif
 
     return 1;
 }
@@ -290,17 +279,7 @@ usage()
     printf(
         "  maintained by Max Lv <max.c.lv@gmail.com> and Linus Yang <laokongzi@gmail.com>\n\n");
     printf("  usage:\n\n");
-#ifdef MODULE_LOCAL
-    printf("    ss-local\n");
-#elif MODULE_REMOTE
-    printf("    ss-server\n");
-#elif MODULE_TUNNEL
-    printf("    ss-tunnel\n");
-#elif MODULE_REDIR
     printf("    ss-redir\n");
-#elif MODULE_MANAGER
-    printf("    ss-manager\n");
-#endif
     printf("\n");
     printf(
         "       -s <server_host>           Host name or IP address of your remote server.\n");
@@ -345,48 +324,24 @@ usage()
     printf(
         "       [-n <number>]              Max number of open files.\n");
 #endif
-#ifndef MODULE_REDIR
-    printf(
-        "       [-i <interface>]           Network interface to bind.\n");
-#endif
     printf(
         "       [-b <local_address>]       Local address to bind.\n");
     printf("\n");
     printf(
         "       [-u]                       Enable UDP relay.\n");
-#ifdef MODULE_REDIR
     printf(
         "                                  TPROXY is required in redir mode.\n");
-#endif
     printf(
         "       [-U]                       Enable UDP relay and disable TCP relay.\n");
-#ifdef MODULE_REDIR
     printf(
         "       [-T]                       Use tproxy instead of redirect (for tcp).\n");
-#endif
-#ifdef MODULE_REMOTE
-    printf(
-        "       [-6]                       Resovle hostname to IPv6 address first.\n");
-#endif
     printf("\n");
-#ifdef MODULE_TUNNEL
-    printf(
-        "       [-L <addr>:<port>]         Destination server address and port\n");
-    printf(
-        "                                  for local port forwarding.\n");
-#endif
-#ifdef MODULE_REMOTE
-    printf(
-        "       [-d <addr>]                Name servers for internal DNS resolver.\n");
-#endif
     printf(
         "       [--reuse-port]             Enable port reuse.\n");
-#if defined(MODULE_REMOTE) || defined(MODULE_LOCAL) || defined(MODULE_REDIR)
     printf(
         "       [--fast-open]              Enable TCP fast open.\n");
     printf(
         "                                  with Linux kernel > 3.7.0.\n");
-#endif
     printf(
         "       [--tcp-incoming-sndbuf]    Size of the incoming connection TCP send buffer.\n");
     printf(
@@ -395,38 +350,14 @@ usage()
         "       [--tcp-outgoing-sndbuf]    Size of the outgoing connection TCP send buffer.\n");
     printf(
         "       [--tcp-outgoing-rcvbuf]    Size of the outgoing connection TCP receive buffer.\n");
-#if defined(MODULE_REMOTE) || defined(MODULE_LOCAL)
-    printf(
-        "       [--acl <acl_file>]         Path to ACL (Access Control List).\n");
-#endif
-#if defined(MODULE_REMOTE) || defined(MODULE_MANAGER)
-    printf(
-        "       [--manager-address <addr>] UNIX domain socket address.\n");
-#endif
-#ifdef MODULE_MANAGER
-    printf(
-        "       [--executable <path>]      Path to the executable of ss-server.\n");
-    printf(
-        "       [-D <path>]                Path to the working directory of ss-manager.\n");
-#endif
     printf(
         "       [--mtu <MTU>]              MTU of your network interface.\n");
-#ifdef __linux__
     printf(
         "       [--mptcp]                  Enable Multipath TCP on MPTCP Kernel.\n");
-#ifdef USE_NFTABLES
-    printf(
-        "       [--nftables-sets <sets>]   Add malicious IP into nftables sets.\n");
-    printf(
-        "                                  sets spec: [<table1>:]<set1>[,[<table2>:]<set2>...]\n");
-#endif
-#endif
-#ifndef MODULE_MANAGER
     printf(
         "       [--no-delay]               Enable TCP_NODELAY.\n");
     printf(
         "       [--key <key_in_base64>]    Key of your remote server.\n");
-#endif
     printf(
         "       [--plugin <name>]          Enable SIP003 plugin. (Experimental)\n");
     printf(
@@ -442,7 +373,6 @@ usage()
 void
 daemonize(const char *path)
 {
-#ifndef __MINGW32__
     /* Our process ID and Session ID */
     pid_t pid, sid;
 
@@ -496,9 +426,6 @@ daemonize(const char *path)
 
     /* Close the standard file descriptors */
     close(STDIN_FILENO);
-#else
-    LOGE("daemonize(): not implemented in MinGW port");
-#endif
 }
 
 #ifdef HAVE_SETRLIMIT
@@ -533,7 +460,6 @@ set_nofile(int nofile)
 char *
 get_default_conf(void)
 {
-#ifndef __MINGW32__
     static char sysconf[] = "/etc/shadowsocks-libev/config.json";
     static char *userconf = NULL;
     static int buf_size   = 0;
@@ -566,9 +492,6 @@ get_default_conf(void)
     // If not, fall back to the system-wide config.
     free(userconf);
     return sysconf;
-#else
-    return "config.json";
-#endif
 }
 
 uint16_t

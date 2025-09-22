@@ -14,14 +14,6 @@ else ()
     option(WITH_DOC_HTML "Build html doc" ON)
 endif ()
 
-# NOTE For brew user, we have to setup this env var. see `brew info asciidoc'
-set(XMLTO_ENV)
-set(XMLTO_CATALOG_DIR_MACOS /usr/local/etc/xml/catalog)
-if (EXISTS ${XMLTO_CATALOG_DIR_MACOS})
-    set(XMLTO_ENV XML_CATALOG_FILES=${XMLTO_CATALOG_DIR_MACOS})
-    message(STATUS "Detect xmlto catalog dir ${XMLTO_CATALOG_DIR_MACOS}")
-endif ()
-
 set(CMAKE_MANPAGE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/man)
 set(CMAKE_HTML_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/html)
 
@@ -31,7 +23,7 @@ set(ASCIIDOC_XML_OPTS -b docbook -d manpage -f ${DOC_DIR}/asciidoc.conf -aversio
 set(ASCIIDOC_HTML_OPTS -b html4 -d article -f ${DOC_DIR}/asciidoc.conf -aversion=${PROJECT_VERSION})
 
 
-set(MAN_NAMES ss-local.1 ss-manager.1 ss-nat.1 ss-redir.1 ss-server.1 ss-tunnel.1 shadowsocks-libev.8)
+set(MAN_NAMES ss-nat.1 ss-redir.1 shadowsocks-libev.8)
 set(MAN_FILES)
 set(HTML_FILES)
 
@@ -46,7 +38,7 @@ foreach (manfile IN LISTS MAN_NAMES)
 
     add_custom_command(OUTPUT ${manfile}
             COMMAND ${ASCIIDOC_EXECUTABLE} ${ASCIIDOC_XML_OPTS} -o ${xmlfile} ${docfile}
-            COMMAND ${CMAKE_COMMAND} -E env ${XMLTO_ENV} ${XMLTO_EXECUTABLE} ${XMLTO_OPTS} ${xmlfile}
+            COMMAND ${XMLTO_EXECUTABLE} ${XMLTO_OPTS} ${xmlfile}
             # After we built the manpage, the xmlfile is nolongger needed
             COMMAND ${CMAKE_COMMAND} -E remove ${xmlfile}
             DEPENDS ${docfile}

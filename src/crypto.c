@@ -24,7 +24,7 @@
 #include "config.h"
 #endif
 
-#if defined(__linux__) && defined(HAVE_LINUX_RANDOM_H)
+#if defined(HAVE_LINUX_RANDOM_H)
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -115,7 +115,7 @@ crypto_md5(const unsigned char *d, size_t n, unsigned char *md)
 static void
 entropy_check(void)
 {
-#if defined(__linux__) && defined(HAVE_LINUX_RANDOM_H) && defined(RNDGETENTCNT)
+#if defined(HAVE_LINUX_RANDOM_H) && defined(RNDGETENTCNT)
     int fd;
     int c;
 
@@ -143,11 +143,7 @@ crypto_init(const char *password, const char *key, const char *method)
     }
 
     // Initialize NONCE bloom filter
-#ifdef MODULE_REMOTE
-    ppbloom_init(BF_NUM_ENTRIES_FOR_SERVER, BF_ERROR_RATE_FOR_SERVER);
-#else
     ppbloom_init(BF_NUM_ENTRIES_FOR_CLIENT, BF_ERROR_RATE_FOR_CLIENT);
-#endif
 
     if (method != NULL) {
         for (i = 0; i < STREAM_CIPHER_NUM; i++)

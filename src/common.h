@@ -26,27 +26,13 @@
 #define SOL_TCP IPPROTO_TCP
 #endif
 
-#if defined(MODULE_TUNNEL) || defined(MODULE_REDIR)
-#define MODULE_LOCAL
-#endif
-
 #include "crypto.h"
 
 int init_udprelay(const char *server_host, const char *server_port,
-#ifdef MODULE_LOCAL
                   const struct sockaddr *remote_addr, const int remote_addr_len,
-#ifdef MODULE_TUNNEL
-                  const ss_addr_t tunnel_addr,
-#endif
-#endif
                   int mtu, crypto_t *crypto, int timeout, const char *iface);
 
 void free_udprelay(void);
-
-#ifdef __ANDROID__
-int protect_socket(int fd);
-int send_traffic_stat(uint64_t tx, uint64_t rx);
-#endif
 
 #define STAGE_ERROR     -1  /* Error detected                   */
 #define STAGE_INIT       0  /* Initial stage                    */
@@ -61,21 +47,16 @@ enum {
     GETOPT_VAL_REUSE_PORT,
     GETOPT_VAL_FAST_OPEN,
     GETOPT_VAL_NODELAY,
-    GETOPT_VAL_ACL,
     GETOPT_VAL_MTU,
     GETOPT_VAL_MPTCP,
     GETOPT_VAL_PLUGIN,
     GETOPT_VAL_PLUGIN_OPTS,
     GETOPT_VAL_PASSWORD,
     GETOPT_VAL_KEY,
-    GETOPT_VAL_MANAGER_ADDRESS,
-    GETOPT_VAL_EXECUTABLE,
-    GETOPT_VAL_WORKDIR,
     GETOPT_VAL_TCP_INCOMING_SNDBUF,
     GETOPT_VAL_TCP_INCOMING_RCVBUF,
     GETOPT_VAL_TCP_OUTGOING_SNDBUF,
-    GETOPT_VAL_TCP_OUTGOING_RCVBUF,
-    GETOPT_VAL_NFTABLES_SETS
+    GETOPT_VAL_TCP_OUTGOING_RCVBUF
 };
 
 #endif // _COMMON_H

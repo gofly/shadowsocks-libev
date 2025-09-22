@@ -30,7 +30,7 @@
 
 int init_udprelay(const char *server_host, const char *server_port,
                   const struct sockaddr *remote_addr, const int remote_addr_len,
-                  int mtu, crypto_t *crypto, int timeout, const char *iface);
+                  int mtu, crypto_t *crypto, int timeout, const char *iface, int fwmark);
 
 void free_udprelay(void);
 
@@ -56,7 +56,8 @@ enum {
     GETOPT_VAL_TCP_INCOMING_SNDBUF,
     GETOPT_VAL_TCP_INCOMING_RCVBUF,
     GETOPT_VAL_TCP_OUTGOING_SNDBUF,
-    GETOPT_VAL_TCP_OUTGOING_RCVBUF
+    GETOPT_VAL_TCP_OUTGOING_RCVBUF,
+    GETOPT_VAL_FWMARK,
 };
 
 #endif // _COMMON_H

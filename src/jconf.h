@@ -90,6 +90,7 @@ typedef struct {
     char *workdir;
     char *acl;
     char *manager_address;
+    int fwmark;
 } jconf_t;
 
 jconf_t *read_jconf(const char *file);

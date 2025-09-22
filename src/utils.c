@@ -362,6 +362,8 @@ usage()
         "       [--plugin <name>]          Enable SIP003 plugin. (Experimental)\n");
     printf(
         "       [--plugin-opts <options>]  Set SIP003 plugin options. (Experimental)\n");
+    printf(
+        "       [--fwmark <mark>]          Set firewall mark for outgoing packets.\n");
     printf("\n");
     printf(
         "       [-v]                       Verbose mode.\n");

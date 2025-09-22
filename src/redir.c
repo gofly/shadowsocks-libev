@@ -103,6 +103,7 @@ static int nofile = 0;
 #endif
 int fast_open       = 0;
 static int no_delay = 0;
+static int fwmark = 0;
 static int ret_val  = 0;
 
 static struct ev_signal sigint_watcher;
@@ -198,7 +199,6 @@ create_and_bind(const char *addr, const char *port)
                 ERROR("setsockopt IP_TRANSPARENT");
                 exit(EXIT_FAILURE);
             }
-            LOGI("tcp tproxy mode enabled");
         }
 
         s = bind(listen_sock, rp->ai_addr, rp->ai_addrlen);
@@ -840,6 +840,14 @@ accept_cb(EV_P_ ev_io *w, int revents)
         setsockopt(remotefd, SOL_SOCKET, SO_RCVBUF, &tcp_outgoing_rcvbuf, sizeof(int));
     }
 
+#ifdef SO_MARK
+    if (fwmark > 0) {
+        if (setsockopt(remotefd, SOL_SOCKET, SO_MARK, &fwmark, sizeof(fwmark)) != 0) {
+            ERROR("setsockopt SO_MARK");
+        }
+    }
+#endif
+
     server_t *server = new_server(serverfd);
     remote_t *remote = new_remote(remotefd, listener->timeout);
     server->remote   = remote;
@@ -936,6 +944,7 @@ main(int argc, char **argv)
         { "no-delay",    no_argument,       NULL, GETOPT_VAL_NODELAY     },
         { "password",    required_argument, NULL, GETOPT_VAL_PASSWORD    },
         { "key",         required_argument, NULL, GETOPT_VAL_KEY         },
+        { "fwmark",      required_argument, NULL, GETOPT_VAL_FWMARK      },
         { "help",        no_argument,       NULL, GETOPT_VAL_HELP        },
         { NULL,          0,                 NULL, 0                      }
     };
@@ -952,16 +961,12 @@ main(int argc, char **argv)
             break;
         case GETOPT_VAL_MTU:
             mtu = atoi(optarg);
-            LOGI("set MTU to %d", mtu);
             break;
         case GETOPT_VAL_MPTCP:
             mptcp = get_mptcp(1);
-            if (mptcp)
-                LOGI("enable multipath TCP (%s)", mptcp > 0 ? "out-of-tree" : "upstream");
             break;
         case GETOPT_VAL_NODELAY:
             no_delay = 1;
-            LOGI("enable TCP no-delay");
             break;
         case GETOPT_VAL_PLUGIN:
             plugin = optarg;
@@ -971,6 +976,9 @@ main(int argc, char **argv)
             break;
         case GETOPT_VAL_KEY:
             key = optarg;
+            break;
+        case GETOPT_VAL_FWMARK:
+            fwmark = atoi(optarg);
             break;
         case GETOPT_VAL_REUSE_PORT:
             reuse_port = 1;
@@ -1147,6 +1155,9 @@ main(int argc, char **argv)
         }
         dscp_num = conf->dscp_num;
         dscp     = conf->dscp;
+        if (fwmark == 0 && conf->fwmark > 0) {
+            fwmark = conf->fwmark;
+        }
     }
 
     if (remote_num == 0 || remote_port == NULL || local_port == NULL
@@ -1220,6 +1231,22 @@ main(int argc, char **argv)
 
     if (ipv6first) {
         LOGI("resolving hostname to IPv6 address first");
+    }
+
+    if (mptcp != 0){
+        LOGI("[redir]enable multipath TCP (%s)", mptcp > 0 ? "out-of-tree" : "upstream");
+    }
+
+    if (mtu > 0) {
+        LOGI("[redir] set MTU to %d", mtu);
+    }
+
+    if (timeout) {
+        LOGI("[redir] set timeout to %s", timeout);
+    }
+
+    if (fwmark > 0) {
+        LOGI("[redir] set fwmark to %d", fwmark);
     }
 
     if (tcp_incoming_sndbuf != 0 && tcp_incoming_sndbuf < SOCKET_BUF_SIZE) {
@@ -1355,7 +1382,7 @@ main(int argc, char **argv)
             }
             struct sockaddr *addr = (struct sockaddr *)storage;
             init_udprelay(local_addr, local_port, addr,
-                          get_sockaddr_len(addr), mtu, crypto, listen_ctx_current->timeout, NULL);
+                          get_sockaddr_len(addr), mtu, crypto, listen_ctx_current->timeout, NULL, fwmark);
         }
 
         if (mode == UDP_ONLY) {

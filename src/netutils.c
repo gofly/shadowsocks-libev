@@ -33,7 +33,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 
-#if defined(HAVE_SYS_IOCTL_H) && defined(HAVE_NET_IF_H) && defined(__linux__)
+#if defined(HAVE_SYS_IOCTL_H) && defined(HAVE_NET_IF_H)
 #include <net/if.h>
 #include <sys/ioctl.h>
 #define SET_INTERFACE

@@ -155,6 +155,9 @@ parse_dscp(char *str)
 jconf_t *
 read_jconf(const char *file)
 {
+    // json-c doesn't support integer initialization other than 0
+    // see: https://github.com/json-c/json-c/issues/610
+    // Thus, we use memset to zero out the whole struct
     static jconf_t conf;
 
     memset(&conf, 0, sizeof(jconf_t));
@@ -347,6 +350,11 @@ read_jconf(const char *file)
                 conf.tcp_tproxy = value->u.boolean;
             } else if (strcmp(name, "workdir") == 0) {
                 conf.workdir = to_string(value);
+            } else if (strcmp(name, "fwmark") == 0) {
+                check_json_value_type(
+                    value, json_integer,
+                    "invalid config file: option 'fwmark' must be an integer");
+                conf.fwmark = value->u.integer;
             } else if (strcmp(name, "acl") == 0) {
                 conf.acl = to_string(value);
             } else if (strcmp(name, "manager_address") == 0) {

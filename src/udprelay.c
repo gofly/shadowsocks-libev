@@ -40,7 +40,7 @@
 #include "config.h"
 #endif
 
-#if defined(HAVE_SYS_IOCTL_H) && defined(HAVE_NET_IF_H) && defined(__linux__)
+#if defined(HAVE_SYS_IOCTL_H) && defined(HAVE_NET_IF_H)
 #include <net/if.h>
 #include <sys/ioctl.h>
 #define SET_INTERFACE
@@ -802,6 +802,15 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
         }
         setnonblocking(remotefd);
 
+#ifdef SO_MARK
+        if (server_ctx->fwmark > 0) {
+            if (setsockopt(remotefd, SOL_SOCKET, SO_MARK, &server_ctx->fwmark,
+                           sizeof(server_ctx->fwmark)) != 0) {
+                ERROR("setsockopt SO_MARK");
+            }
+        }
+#endif
+
 #ifdef SO_NOSIGPIPE
         set_nosigpipe(remotefd);
 #endif
@@ -880,7 +889,7 @@ free_cb(void *key, void *element)
 int
 init_udprelay(const char *server_host, const char *server_port,
               const struct sockaddr *remote_addr, const int remote_addr_len,
-              int mtu, crypto_t *crypto, int timeout, const char *iface)
+              int mtu, crypto_t *crypto, int timeout, const char *iface, int fwmark)
 {
     s_port = server_port;
     // Initialize ev loop
@@ -911,6 +920,7 @@ init_udprelay(const char *server_host, const char *server_port,
     server_ctx->crypto     = crypto;
     server_ctx->iface      = iface;
     server_ctx->conn_cache = conn_cache;
+    server_ctx->fwmark = fwmark;
     server_ctx->remote_addr     = remote_addr;
     server_ctx->remote_addr_len = remote_addr_len;
 

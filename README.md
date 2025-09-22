@@ -349,10 +349,7 @@ More information about the image can be found [here](docker/alpine/README.md).
 For a detailed and complete list of all supported arguments,
 you may refer to the man pages of the applications, respectively.
 
-    ss-[local|redir|server|tunnel|manager]
-
-       -s <server_host>           Host name or IP address of your remote server.
-
+    ss-redir -s <server_host> -p <server_port> -l <local_port> -k <password> -m <encrypt_method>
        -p <server_port>           Port number of your remote server.
 
        -l <local_port>            Port number of your local server.
@@ -380,17 +377,7 @@ you may refer to the man pages of the applications, respectively.
 
        [-n <number>]              Max number of open files.
 
-       [-i <interface>]           Network interface to bind.
-                                  (not available in redir mode)
-
        [-b <local_address>]       Local address to bind.
-                                  For servers: Specify the local address to use 
-                                  while this server is making outbound 
-                                  connections to remote servers on behalf of the
-                                  clients.
-                                  For clients: Specify the local address to use 
-                                  while this client is making outbound 
-                                  connections to the server.
 
        [-u]                       Enable UDP relay.
                                   (TPROXY is required in redir mode)
@@ -401,38 +388,18 @@ you may refer to the man pages of the applications, respectively.
        [-T]                       Use tproxy instead of redirect. (for tcp)
                                   (only available in redir mode)
 
-       [-L <addr>:<port>]         Destination server address and port
-                                  for local port forwarding.
-                                  (only available in tunnel mode)
-
        [-6]                       Resolve hostname to IPv6 address first.
-
-       [-d <addr>]                Name servers for internal DNS resolver.
-                                  (only available in server mode)
 
        [--reuse-port]             Enable port reuse.
 
        [--fast-open]              Enable TCP fast open.
                                   with Linux kernel > 3.7.0.
-                                  (only available in local and server mode)
-
-       [--acl <acl_file>]         Path to ACL (Access Control List).
-                                  (only available in local and server mode)
-
-       [--manager-address <addr>] UNIX domain socket address.
-                                  (only available in server and manager mode)
 
        [--mtu <MTU>]              MTU of your network interface.
 
        [--mptcp]                  Enable Multipath TCP on MPTCP Kernel.
 
        [--no-delay]               Enable TCP_NODELAY.
-
-       [--executable <path>]      Path to the executable of ss-server.
-                                  (only available in manager mode)
-
-       [-D <path>]                Path to the working directory of ss-manager.
-                                  (only available in manager mode)
 
        [--key <key_in_base64>]    Key of your remote server.
 

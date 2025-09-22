@@ -34,10 +34,6 @@
 #include "crypto.h"
 #include "jconf.h"
 
-#ifdef MODULE_REMOTE
-#include "resolv.h"
-#endif
-
 #include "cache.h"
 
 #include "common.h"
@@ -55,28 +51,9 @@ typedef struct server_ctx {
     int timeout;
     const char *iface;
     struct cache *conn_cache;
-#ifdef MODULE_LOCAL
     const struct sockaddr *remote_addr;
     int remote_addr_len;
-#ifdef MODULE_TUNNEL
-    ss_addr_t tunnel_addr;
-#endif
-#endif
-#ifdef MODULE_REMOTE
-    struct ev_loop *loop;
-#endif
 } server_ctx_t;
-
-#ifdef MODULE_REMOTE
-typedef struct query_ctx {
-    struct sockaddr_storage src_addr;
-    buffer_t *buf;
-    int addr_header_len;
-    char addr_header[MAX_ADDR_HEADER_SIZE];
-    struct server_ctx *server_ctx;
-    struct remote_ctx *remote_ctx;
-} query_ctx_t;
-#endif
 
 typedef struct remote_ctx {
     ev_io io;
@@ -84,9 +61,6 @@ typedef struct remote_ctx {
     int af;
     int fd;
     struct sockaddr_storage src_addr;
-#ifdef MODULE_REMOTE
-    struct sockaddr_storage dst_addr;
-#endif
     struct server_ctx *server_ctx;
 } remote_ctx_t;
 

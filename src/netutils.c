@@ -28,12 +28,10 @@
 #include "config.h"
 #endif
 
-#ifndef __MINGW32__
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <unistd.h>
-#endif
 
 #if defined(HAVE_SYS_IOCTL_H) && defined(HAVE_NET_IF_H) && defined(__linux__)
 #include <net/if.h>
@@ -149,10 +147,6 @@ get_sockaddr(char *host, char *port,
         }
         return 0;
     } else {
-#ifdef __ANDROID__
-        extern int vpn;
-        assert(!vpn);   // protecting DNS packets isn't supported yet
-#endif
         struct addrinfo hints;
         struct addrinfo *result, *rp;
 

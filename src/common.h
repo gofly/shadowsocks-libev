@@ -29,8 +29,9 @@
 #include "crypto.h"
 
 int init_udprelay(const char *server_host, const char *server_port,
-                  const struct sockaddr *remote_addr, const int remote_addr_len,
-                  int mtu, crypto_t *crypto, int timeout, const char *iface, int fwmark);
+                  int remote_num, struct sockaddr **remote_addr, int mtu,
+                  crypto_t *crypto, int timeout, const char *iface, int fwmark,
+                  volatile bool *remote_status);
 
 void free_udprelay(void);
 
@@ -54,6 +55,11 @@ enum {
     GETOPT_VAL_PASSWORD,
     GETOPT_VAL_KEY,
     GETOPT_VAL_FWMARK,
+    GETOPT_VAL_PROBE_INTERVAL,
+    GETOPT_VAL_PROBE_TIMEOUT,
+    GETOPT_VAL_PROBE_UP_COUNT,
+    GETOPT_VAL_PROBE_DOWN_COUNT,
+    GETOPT_VAL_PROBE_DOMAIN,
 };
 
 #endif // _COMMON_H

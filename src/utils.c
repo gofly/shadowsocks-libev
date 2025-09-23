@@ -65,6 +65,16 @@ ERROR(const char *s)
 
 int use_tty = 1;
 
+int
+setnonblocking(int fd)
+{
+    int flags;
+    if (-1 == (flags = fcntl(fd, F_GETFL, 0))) {
+        flags = 0;
+    }
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
 char *
 ss_itoa(int i)
 {
@@ -356,6 +366,16 @@ usage()
         "       [--plugin-opts <options>]  Set SIP003 plugin options. (Experimental)\n");
     printf(
         "       [--fwmark <mark>]          Set firewall mark for outgoing packets.\n");
+    printf(
+        "       [--probe-interval <secs>]  Interval in seconds for active remote server probing (default: 60).\n");
+    printf(
+        "       [--probe-timeout <secs>]   Timeout in seconds for active remote server probing (default: 5).\n");
+    printf(
+        "       [--probe-up-count <cnt>]   Success count to mark a remote as up (default: 3).\n");
+    printf(
+        "       [--probe-down-count <cnt>] Failure count to mark a remote as down (default: 3).\n");
+    printf(
+        "       [--probe-domain <domain>]  Domain to use for probing (default: www.google.com).\n");
     printf("\n");
     printf(
         "       [-v]                       Verbose mode.\n");

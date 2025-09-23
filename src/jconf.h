@@ -76,7 +76,6 @@ typedef struct {
     char *nameserver;
     int dscp_num;
     ss_dscp_t dscp[MAX_DSCP_NUM];
-    char *tunnel_address;
     int mode;
     int mtu;
     int mptcp;
@@ -87,6 +86,11 @@ typedef struct {
     char *acl;
     char *manager_address;
     int fwmark;
+    int probe_interval;
+    int probe_timeout;
+    int probe_up_count;
+    int probe_down_count;
+    char *probe_domain;
 } jconf_t;
 
 jconf_t *read_jconf(const char *file);

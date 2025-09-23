@@ -41,6 +41,7 @@
 
 #include "netutils.h"
 #include "utils.h"
+#include "crypto.h"
 
 #ifndef SO_REUSEPORT
 #define SO_REUSEPORT 15
@@ -121,6 +122,168 @@ bind_to_addr(struct sockaddr_storage *storage,
         return bind(socket_fd, (struct sockaddr *)storage, sizeof(struct sockaddr_in6));
     }
     return -1;
+}
+
+int
+construct_udprelay_header(const struct sockaddr_storage *in_addr,
+                          char *addr_header)
+{
+    int addr_header_len = 0;
+
+    if (in_addr->ss_family == AF_INET) {
+        struct sockaddr_in *addr = (struct sockaddr_in *)in_addr;
+        size_t addr_len          = sizeof(struct in_addr);
+
+        addr_header[addr_header_len++] = 1;
+        memcpy(addr_header + addr_header_len, &addr->sin_addr, addr_len);
+        addr_header_len += addr_len;
+        memcpy(addr_header + addr_header_len, &addr->sin_port, 2);
+        addr_header_len += 2;
+    } else if (in_addr->ss_family == AF_INET6) {
+        struct sockaddr_in6 *addr = (struct sockaddr_in6 *)in_addr;
+        size_t addr_len           = sizeof(struct in6_addr);
+
+        addr_header[addr_header_len++] = 4;
+        memcpy(addr_header + addr_header_len, &addr->sin6_addr, addr_len);
+        addr_header_len += addr_len;
+        memcpy(addr_header + addr_header_len, &addr->sin6_port, 2);
+        addr_header_len += 2;
+    } else {
+        return 0;
+    }
+
+    return addr_header_len;
+}
+
+int
+parse_udprelay_header(const char *buf, const size_t buf_len,
+                      char *host, char *port, struct sockaddr_storage *storage)
+{
+    if (buf == NULL || buf_len == 0) return 0;
+
+    const uint8_t atyp = *(const uint8_t *)buf;
+    int offset = 1;
+
+    /* helper to check remaining length */
+    #define REMAIN_AT_LEAST(x) ((size_t)(offset) + (size_t)(x) <= (buf_len))
+
+    if ((atyp & ADDRTYPE_MASK) == 1) {
+        /* IPv4 */
+        size_t in_addr_len = sizeof(struct in_addr);
+        /* need: 1 (atyp) + in_addr_len + 2 (port) */
+        if (!REMAIN_AT_LEAST(in_addr_len + 2)) {
+            LOGE("[udp] parse header: IPv4 header too short");
+            return 0;
+        }
+        if (storage != NULL) {
+            struct sockaddr_in *addr = (struct sockaddr_in *)storage;
+            addr->sin_family = AF_INET;
+            memcpy(&addr->sin_addr, buf + offset, in_addr_len);
+            memcpy(&addr->sin_port, buf + offset + in_addr_len, sizeof(uint16_t));
+        }
+        if (host != NULL) {
+            if (inet_ntop(AF_INET, (const void *)(buf + offset), host, INET_ADDRSTRLEN) == NULL) {
+                /* inet_ntop 失敗也不致命，但清空 host */
+                host[0] = '\0';
+            }
+        }
+        offset += in_addr_len + 2;
+    } else if ((atyp & ADDRTYPE_MASK) == 3) {
+        /* Domain name */
+        if (!REMAIN_AT_LEAST(1)) {
+            LOGE("[udp] parse header: domain length byte missing");
+            return 0;
+        }
+        uint8_t name_len = *(const uint8_t *)(buf + offset);
+        /* total needed: 1 (atyp) + 1 (name_len) + name_len + 2 (port) */
+        if (!REMAIN_AT_LEAST(1 + name_len + 2)) {
+            LOGE("[udp] parse header: domain header too short (name_len=%d, buf_len=%zu)", name_len, buf_len);
+            return 0;
+        }
+        /* guard tmp buffer size */
+        if (name_len >= MAX_HOSTNAME_LEN) {
+            LOGE("[udp] parse header: domain name too long (%d >= %d)", name_len, MAX_HOSTNAME_LEN);
+            return 0;
+        }
+
+        if (storage != NULL) {
+            char tmp[MAX_HOSTNAME_LEN];
+            memset(tmp, 0, sizeof(tmp));
+            memcpy(tmp, buf + offset + 1, name_len);
+            tmp[name_len] = '\0'; /* ensure nul-terminated */
+
+            struct cork_ip ip;
+            if (cork_ip_init(&ip, tmp) != -1) {
+                if (ip.version == 4) {
+                    struct sockaddr_in *addr = (struct sockaddr_in *)storage;
+                    memset(addr, 0, sizeof(*addr));
+                    addr->sin_family = AF_INET;
+                    if (inet_pton(AF_INET, tmp, &(addr->sin_addr)) <= 0) {
+                        LOGE("[udp] inet_pton failed for %s", tmp);
+                    }
+                    memcpy(&addr->sin_port, buf + offset + 1 + name_len, sizeof(uint16_t));
+                } else if (ip.version == 6) {
+                    struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)storage;
+                    memset(addr6, 0, sizeof(*addr6));
+                    addr6->sin6_family = AF_INET6;
+                    if (inet_pton(AF_INET6, tmp, &(addr6->sin6_addr)) <= 0) {
+                        LOGE("[udp] inet_pton failed for %s", tmp);
+                    }
+                    memcpy(&addr6->sin6_port, buf + offset + 1 + name_len, sizeof(uint16_t));
+                } else {
+                    /* leave storage with AF_UNSPEC so caller can know it failed */
+                    ((struct sockaddr_storage*)storage)->ss_family = AF_UNSPEC;
+                }
+            } else {
+                /* try resolving later — for now leave storage untouched or AF_UNSPEC */
+                ((struct sockaddr_storage*)storage)->ss_family = AF_UNSPEC;
+            }
+        }
+        if (host != NULL) {
+            /* copy and NUL-terminate host */
+            memcpy(host, buf + offset + 1, name_len);
+            host[name_len] = '\0';
+        }
+        offset += 1 + name_len + 2;
+    } else if ((atyp & ADDRTYPE_MASK) == 4) {
+        /* IPv6 */
+        size_t in6_addr_len = sizeof(struct in6_addr);
+        /* need: 1 (atyp) + in6_addr_len + 2 (port) */
+        if (!REMAIN_AT_LEAST(in6_addr_len + 2)) {
+            LOGE("[udp] parse header: IPv6 header too short");
+            return 0;
+        }
+        if (storage != NULL) {
+            struct sockaddr_in6 *addr = (struct sockaddr_in6 *)storage;
+            addr->sin6_family = AF_INET6;
+            memcpy(&addr->sin6_addr, buf + offset, in6_addr_len);
+            memcpy(&addr->sin6_port, buf + offset + in6_addr_len, sizeof(uint16_t));
+        }
+        if (host != NULL) {
+            if (inet_ntop(AF_INET6, (const void *)(buf + offset), host, INET6_ADDRSTRLEN) == NULL) {
+                host[0] = '\0';
+            }
+        }
+        offset += in6_addr_len + 2;
+    } else {
+        LOGE("[udp] parse header: unknown atyp %d", atyp);
+        return 0;
+    }
+
+    /* final sanity */
+    if (offset <= 1 || (size_t)offset > buf_len) {
+        LOGE("[udp] invalid header parsing result (offset=%d, buf_len=%zu)", offset, buf_len);
+        return 0;
+    }
+
+    /* fill port if requested (offset currently points just past port) */
+    if (port != NULL) {
+        /* port bytes are at offset-2 .. offset-1 */
+        int port_val = load16_be((const uint8_t *)buf + offset - 2);
+        sprintf(port, "%d", port_val);
+    }
+
+    return offset;
 }
 
 ssize_t

@@ -222,6 +222,7 @@ int run_as(const char *user);
 void FATAL(const char *msg);
 void usage(void);
 void daemonize(const char *path);
+int setnonblocking(int fd);
 char *ss_strndup(const char *s, size_t n);
 #ifdef HAVE_SETRLIMIT
 int set_nofile(int nofile);

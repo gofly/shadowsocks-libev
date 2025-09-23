@@ -34,6 +34,7 @@ ss_redir_SOURCES = utils.c \
                    netutils.c \
                    cache.c \
                    udprelay.c \
+                   probe.c \
                    redir.c \
                    $(crypto_src) \
                    $(plugin_src)
@@ -44,4 +45,4 @@ ss_redir_LDADD += -lcares
 
 noinst_HEADERS = crypto.h stream.h aead.h json.h netutils.h redir.h uthash.h \
                  cache.h plugin.h utils.h base64.h ppbloom.h \
-                 common.h jconf.h udprelay.h
+                 common.h jconf.h udprelay.h probe.h

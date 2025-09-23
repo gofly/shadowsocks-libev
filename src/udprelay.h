@@ -51,10 +51,16 @@ typedef struct server_ctx {
     int timeout;
     const char *iface;
     struct cache *conn_cache;
-    const struct sockaddr *remote_addr;
-    int remote_addr_len;
+    int remote_num;
+    struct sockaddr **remote_addr;
     int fwmark;
+    volatile bool *remote_status;
 } server_ctx_t;
+
+typedef enum {
+    STATE_IDLE,
+    STATE_AWAITING_REPLY
+} remote_state_t;
 
 typedef struct remote_ctx {
     ev_io io;
@@ -62,7 +68,9 @@ typedef struct remote_ctx {
     int af;
     int fd;
     struct sockaddr_storage src_addr;
-    struct server_ctx *server_ctx;
+    remote_state_t state;
+    server_ctx_t *server_ctx;
+    int remote_idx;
 } remote_ctx_t;
 
 #endif // _UDPRELAY_H

@@ -38,6 +38,7 @@ typedef struct listen_ctx {
     int fd;
     int mptcp;
     int tos;
+    volatile bool *remote_status;
     struct sockaddr **remote_addr;
 } listen_ctx_t;
 
@@ -52,14 +53,16 @@ typedef struct server {
 
     buffer_t *buf;
 
-    cipher_ctx_t *e_ctx;
-    cipher_ctx_t *d_ctx;
-    struct server_ctx *recv_ctx;
-    struct server_ctx *send_ctx;
+    cipher_ctx_t *e_ctx; // encryption context
+    cipher_ctx_t *d_ctx; // decryption context
+    server_ctx_t *recv_ctx;
+    server_ctx_t *send_ctx;
     struct remote *remote;
 
     struct sockaddr_storage destaddr;
     ev_timer delayed_connect_watcher;
+    int remote_idx;
+    struct listen_ctx *listener;
 } server_t;
 
 typedef struct remote_ctx {
@@ -72,8 +75,8 @@ typedef struct remote_ctx {
 typedef struct remote {
     int fd;
     buffer_t *buf;
-    struct remote_ctx *recv_ctx;
-    struct remote_ctx *send_ctx;
+    remote_ctx_t *recv_ctx;
+    remote_ctx_t *send_ctx;
     struct server *server;
     uint32_t counter;
     struct sockaddr *addr;

@@ -318,7 +318,6 @@ stream_encrypt_all(buffer_t *plaintext, cipher_t *cipher, size_t capacity)
     cipher_ctx_set_nonce(&cipher_ctx, nonce, nonce_len, 1);
     memcpy(ciphertext->data, nonce, nonce_len);
 
-
     if (cipher->method >= SALSA20) {
         crypto_stream_xor_ic((uint8_t *)(ciphertext->data + nonce_len),
                              (const uint8_t *)plaintext->data, (uint64_t)(plaintext->len),

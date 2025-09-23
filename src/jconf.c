@@ -318,8 +318,6 @@ read_jconf(const char *file)
                         }
                     }
                 }
-            } else if (strcmp(name, "tunnel_address") == 0) {
-                conf.tunnel_address = to_string(value);
             } else if (strcmp(name, "mode") == 0) {
                 char *mode_str = to_string(value);
 
@@ -371,6 +369,28 @@ read_jconf(const char *file)
                     value, json_integer,
                     "invalid config file: option 'fwmark' must be an integer");
                 conf.fwmark = value->u.integer;
+            } else if (strcmp(name, "probe_interval") == 0) {
+                check_json_value_type(
+                    value, json_integer,
+                    "invalid config file: option 'probe_interval' must be an integer");
+                conf.probe_interval = value->u.integer;
+            } else if (strcmp(name, "probe_timeout") == 0) {
+                check_json_value_type(
+                    value, json_integer,
+                    "invalid config file: option 'probe_timeout' must be an integer");
+                conf.probe_timeout = value->u.integer;
+            } else if (strcmp(name, "probe_up_count") == 0) {
+                check_json_value_type(
+                    value, json_integer,
+                    "invalid config file: option 'probe_up_count' must be an integer");
+                conf.probe_up_count = value->u.integer;
+            } else if (strcmp(name, "probe_down_count") == 0) {
+                check_json_value_type(
+                    value, json_integer,
+                    "invalid config file: option 'probe_down_count' must be an integer");
+                conf.probe_down_count = value->u.integer;
+            } else if (strcmp(name, "probe_domain") == 0) {
+                conf.probe_domain = to_string(value);
             } else if (strcmp(name, "acl") == 0) {
                 conf.acl = to_string(value);
             } else if (strcmp(name, "manager_address") == 0) {

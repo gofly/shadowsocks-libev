@@ -222,6 +222,7 @@ int run_as(const char *user);
 void FATAL(const char *msg);
 void usage(void);
 void daemonize(const char *path);
+int setnonblocking(int fd);
 char *ss_strndup(const char *s, size_t n);
 #ifdef HAVE_SETRLIMIT
 int set_nofile(int nofile);
@@ -250,6 +251,7 @@ void *ss_realloc(void *ptr, size_t new_size);
 int ss_is_ipv6addr(const char *addr);
 char *get_default_conf(void);
 uint16_t load16_be(const void *s);
+void store16_be(uint16_t val, uint8_t *s);
 int get_mptcp(int enable);
 
 #endif // _UTILS_H

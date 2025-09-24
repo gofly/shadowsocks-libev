@@ -88,13 +88,13 @@ typedef struct {
     int tcp_tproxy;
     char *workdir;
     char *acl;
-    char *manager_address;
     int fwmark;
     int probe_interval;
     int probe_timeout;
     int probe_up_count;
     int probe_down_count;
     char *probe_domain;
+    int metrics_port;
 } jconf_t;
 
 jconf_t *read_jconf(const char *file);

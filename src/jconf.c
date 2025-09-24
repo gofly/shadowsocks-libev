@@ -393,8 +393,11 @@ read_jconf(const char *file)
                 conf.probe_domain = to_string(value);
             } else if (strcmp(name, "acl") == 0) {
                 conf.acl = to_string(value);
-            } else if (strcmp(name, "manager_address") == 0) {
-                conf.manager_address = to_string(value);
+            } else if (strcmp(name, "metrics_port") == 0) {
+                check_json_value_type(
+                    value, json_integer,
+                    "invalid config file: option 'metrics_port' must be an integer");
+                conf.metrics_port = value->u.integer;
             }
         }
     } else {

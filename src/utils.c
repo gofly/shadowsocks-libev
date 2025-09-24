@@ -384,6 +384,8 @@ usage()
         "       [--probe-down-count <cnt>] Failure count to mark a remote as down (default: 3).\n");
     printf(
         "       [--probe-domain <domain>]  Domain to use for probing (default: www.google.com).\n");
+    printf(
+        "       [--metrics-port <port>]    Port to expose Prometheus metrics.\n");
     printf("\n");
     printf(
         "       [-v]                       Verbose mode.\n");

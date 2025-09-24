@@ -85,34 +85,6 @@ setinterface(int socket_fd, const char *interface_name)
 #endif
 
 int
-parse_local_addr(struct sockaddr_storage *storage_v4,
-                 struct sockaddr_storage *storage_v6,
-                 const char *host)
-{
-    if (host != NULL) {
-        struct cork_ip ip;
-        if (cork_ip_init(&ip, host) != -1) {
-            if (ip.version == 4) {
-                memset(storage_v4, 0, sizeof(struct sockaddr_storage));
-                struct sockaddr_in *addr = (struct sockaddr_in *)storage_v4;
-                inet_pton(AF_INET, host, &addr->sin_addr);
-                addr->sin_family = AF_INET;
-                LOGI("binding to outbound IPv4 addr: %s", host);
-                return AF_INET;
-            } else if (ip.version == 6) {
-                memset(storage_v6, 0, sizeof(struct sockaddr_storage));
-                struct sockaddr_in6 *addr = (struct sockaddr_in6 *)storage_v6;
-                inet_pton(AF_INET6, host, &addr->sin6_addr);
-                addr->sin6_family = AF_INET6;
-                LOGI("binding to outbound IPv6 addr: %s", host);
-                return AF_INET6;
-            }
-        }
-    }
-    return 0;
-}
-
-int
 bind_to_addr(struct sockaddr_storage *storage,
              int socket_fd)
 {
@@ -354,6 +326,47 @@ get_sockaddr(char *host, char *port,
     }
 
     return -1;
+}
+
+char *
+get_addr_str(const struct sockaddr *sa, bool has_port)
+{
+    static char s[SS_ADDRSTRLEN];
+    memset(s, 0, SS_ADDRSTRLEN);
+    char addr[INET6_ADDRSTRLEN] = { 0 };
+    char port[PORTSTRLEN]       = { 0 };
+    uint16_t p;
+    struct sockaddr_in sa_in;
+    struct sockaddr_in6 sa_in6;
+
+    if (sa == NULL) {
+        strncpy(s, "null", SS_ADDRSTRLEN - 1);
+        return s;
+    }
+
+    switch (sa->sa_family) {
+    case AF_INET:
+        memcpy(&sa_in, sa, sizeof(struct sockaddr_in));
+        inet_ntop(AF_INET, &sa_in.sin_addr, addr, INET_ADDRSTRLEN);
+        p = ntohs(sa_in.sin_port);
+        sprintf(port, "%d", p);
+        break;
+
+    case AF_INET6:
+        memcpy(&sa_in6, sa, sizeof(struct sockaddr_in6));
+        inet_ntop(AF_INET6, &sa_in6.sin6_addr, addr, INET6_ADDRSTRLEN);
+        p = ntohs(sa_in6.sin6_port);
+        sprintf(port, "%d", p);
+        break;
+
+    default:
+        strncpy(s, "Unknown AF", SS_ADDRSTRLEN - 1);
+        return s;
+    }
+
+    snprintf(s, SS_ADDRSTRLEN, has_port ? "%s:%s" : "%s", addr, port);
+
+    return s;
 }
 
 int

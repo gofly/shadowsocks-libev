@@ -139,17 +139,16 @@ getdestaddr(int fd, struct sockaddr_storage *destaddr)
 }
 
 int
-create_and_bind(const char *addr, const char *port)
+create_and_bind(EV_P_ const char *addr, const char *port, listen_ctx_t *listener)
 {
     struct addrinfo hints;
     struct addrinfo *result, *rp;
-    int s, listen_sock;
+    int s, listen_sock, n = 0;
 
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family   = AF_UNSPEC;   /* Return IPv4 and IPv6 choices */
     hints.ai_socktype = SOCK_STREAM; /* We want a TCP socket */
-
-    result = NULL;
+    hints.ai_flags    = AI_PASSIVE | AI_ADDRCONFIG;
 
     s = getaddrinfo(addr, port, &hints, &result);
     if (s != 0) {
@@ -166,6 +165,11 @@ create_and_bind(const char *addr, const char *port)
         listen_sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         if (listen_sock == -1) {
             continue;
+        }
+
+        if (rp->ai_family == AF_INET6) {
+            int ipv6only = 1;
+            setsockopt(listen_sock, IPPROTO_IPV6, IPV6_V6ONLY, &ipv6only, sizeof(ipv6only));
         }
 
         int opt = 1;
@@ -199,19 +203,27 @@ create_and_bind(const char *addr, const char *port)
 
         s = bind(listen_sock, rp->ai_addr, rp->ai_addrlen);
         if (s == 0) {
-            /* We managed to bind successfully! */
-            break;
+            if (listen(listen_sock, SOMAXCONN) == -1) {
+                ERROR("listen() error");
+                close(listen_sock);
+                continue;
+            }
+            setnonblocking(listen_sock);
+
+            ev_io *listen_io = ss_malloc(sizeof(ev_io));
+            listen_io->data = listener;
+            ev_io_init(listen_io, accept_cb, listen_sock, EV_READ);
+            ev_io_start(EV_A_ listen_io);
+            n++;
         } else {
             ERROR("bind");
+            close(listen_sock);
         }
-
-        close(listen_sock);
-        listen_sock = -1;
     }
 
     freeaddrinfo(result);
 
-    return listen_sock;
+    return (n > 0) ? 0 : -1;
 }
 
 static void
@@ -888,13 +900,13 @@ start_connect_remote(EV_P_ server_t *server)
 static void
 accept_cb(EV_P_ ev_io *w, int revents)
 {
-    listen_ctx_t *listener = (listen_ctx_t *)w;
+    listen_ctx_t *listener = (listen_ctx_t *)w->data;
     struct sockaddr_storage destaddr;
     memset(&destaddr, 0, sizeof(struct sockaddr_storage));
 
     int err;
 
-    int serverfd = accept(listener->fd, NULL, NULL);
+    int serverfd = accept(w->fd, NULL, NULL);
     if (serverfd == -1) {
         ERROR("[tcp] accept");
         return;
@@ -975,15 +987,14 @@ main(int argc, char **argv)
     int pid_flags    = 0;
     int mptcp        = 0;
     int mtu          = 0;
-    char *user       = NULL;
     char *local_port = NULL;
-    char *local_addr = NULL;
     char *password   = NULL;
     char *key        = NULL;
     char *timeout    = NULL;
     char *method     = NULL;
     char *pid_path   = NULL;
     char *conf_path  = NULL;
+    char *user       = NULL;
 
     char *plugin      = NULL;
     char *plugin_opts = NULL;
@@ -1031,7 +1042,7 @@ main(int argc, char **argv)
 
     USE_TTY();
 
-    while ((c = getopt_long(argc, argv, "f:s:p:l:k:t:m:c:b:a:n:huUTv6AB:P:",
+    while ((c = getopt_long(argc, argv, "f:s:p:l:k:t:m:c:a:n:huUTv6A:",
                             long_options, NULL)) != -1) {
         switch (c) {
         case GETOPT_VAL_FAST_OPEN:
@@ -1076,12 +1087,11 @@ main(int argc, char **argv)
             break;
         case GETOPT_VAL_PROBE_DOMAIN:
             probe_domain = optarg;
+        case GETOPT_VAL_REUSE_PORT:
+            reuse_port = 1;
             break;
         case GETOPT_VAL_METRICS_PORT:
             metrics_port = atoi(optarg);
-            break;
-        case GETOPT_VAL_REUSE_PORT:
-            reuse_port = 1;
             break;
         case 's':
             if (remote_num < MAX_REMOTE_NUM) {
@@ -1110,9 +1120,6 @@ main(int argc, char **argv)
             break;
         case 'c':
             conf_path = optarg;
-            break;
-        case 'b':
-            local_addr = optarg;
             break;
         case 'a':
             user = optarg;
@@ -1173,12 +1180,6 @@ main(int argc, char **argv)
         if (remote_port == NULL) {
             remote_port = conf->remote_port;
         }
-        if (local_addr == NULL) {
-            local_addr = conf->local_addr;
-        }
-        if (local_port == NULL) {
-            local_port = conf->local_port;
-        }
         if (password == NULL) {
             password = conf->password;
         }
@@ -1190,6 +1191,9 @@ main(int argc, char **argv)
         }
         if (timeout == NULL) {
             timeout = conf->timeout;
+        }
+        if (local_port == NULL) {
+            local_port = conf->local_port;
         }
         if (user == NULL) {
             user = conf->user;
@@ -1298,14 +1302,6 @@ main(int argc, char **argv)
     }
 #endif
 
-    if (local_addr == NULL) {
-        if (is_ipv6only(remote_addr, remote_num, ipv6first)) {
-            local_addr = "::1";
-        } else {
-            local_addr = "127.0.0.1";
-        }
-    }
-
     if (fast_open == 1) {
 #ifdef TCP_FASTOPEN
         LOGI("using tcp fast open");
@@ -1389,13 +1385,12 @@ main(int argc, char **argv)
 
     /* Setup proxy context */
     struct listen_ctx listen_ctx;
-    memset(&listen_ctx, 0, sizeof(struct listen_ctx));
     listen_ctx.remote_num  = remote_num;
     listen_ctx.remote_addr = ss_malloc(sizeof(struct sockaddr *) * remote_num);
     memset(listen_ctx.remote_addr, 0, sizeof(struct sockaddr *) * remote_num);
     listen_ctx.remote_status = ss_malloc(sizeof(bool) * remote_num);
 
-    for (i = 0; i < remote_num; i++) {
+    for (i = 0; i < listen_ctx.remote_num; i++) {
         listen_ctx.remote_status[i] = true; /* Assume all are up initially */
         char *host = remote_addr[i].host;
         char *port = remote_addr[i].port == NULL ? remote_port :
@@ -1423,7 +1418,7 @@ main(int argc, char **argv)
      * `remote_status` array that the TCP module will share.
      */
     if (mode != TCP_ONLY) {
-        init_udprelay(local_addr, local_port, listen_ctx.remote_num,
+        init_udprelay(NULL, local_port, listen_ctx.remote_num,
                       listen_ctx.remote_addr, mtu, crypto,
                       listen_ctx.timeout, NULL, fwmark, listen_ctx.remote_status);
     }
@@ -1433,22 +1428,14 @@ main(int argc, char **argv)
      * array, which is either managed by the UDP prober or statically set to true.
      */
     if (mode != UDP_ONLY) {
-        listen_ctx_t *listen_ctx_current = &listen_ctx;
+        listen_ctx_t *listen_ctx_current = &listen_ctx; /* The first one is on stack */
+        listen_ctx.tos = 0; /* Default TOS for the primary listener */
         do {
             if (listen_ctx_current->tos) {
-                LOGI("listening at %s:%s (TOS 0x%x)", local_addr, local_port, listen_ctx_current->tos);
+                LOGI("listening at :%s (TOS 0x%x)", local_port, listen_ctx_current->tos);
             } else {
-                LOGI("listening at %s:%s", local_addr, local_port);
+                LOGI("listening at :%s", local_port);
             }
-
-            int listenfd = create_and_bind(local_addr, local_port);
-            if (listenfd == -1) FATAL("bind() error");
-            if (listen(listenfd, SOMAXCONN) == -1) FATAL("listen() error");
-            setnonblocking(listenfd);
-
-            listen_ctx_current->fd = listenfd;
-            ev_io_init(&listen_ctx_current->io, accept_cb, listenfd, EV_READ);
-            ev_io_start(loop, &listen_ctx_current->io);
 
             if (listen_ctx_count < MAX_LISTEN_CTX) {
                 listen_ctx_list[listen_ctx_count++] = listen_ctx_current;
@@ -1456,15 +1443,24 @@ main(int argc, char **argv)
                 LOGE("too many listen ctx; increase MAX_LISTEN_CTX");
             }
 
-            /* Handle additional TOS/DSCP listening ports */
             if (dscp_num > 0) {
-                listen_ctx_t *new_lc = (listen_ctx_t *)ss_malloc(sizeof(listen_ctx_t));
-                memcpy(new_lc, &listen_ctx, sizeof(listen_ctx_t));
+                /* Create a new context for the next DSCP value */
+                listen_ctx_t *new_lc = ss_malloc(sizeof(listen_ctx_t));
+                memcpy(new_lc, &listen_ctx, sizeof(listen_ctx_t)); /* Copy base settings */
                 local_port = dscp[dscp_num - 1].port;
-                new_lc->tos = dscp[dscp_num - 1].dscp << 2;
+                new_lc->tos = dscp[dscp_num - 1].dscp << 2; /* Set specific TOS */
                 listen_ctx_current = new_lc;
+            } else {
+                listen_ctx_current = NULL; // Stop the loop
             }
-        } while (dscp_num-- > 0);
+        } while (dscp_num-- > 0 && listen_ctx_current != NULL);
+
+        /* Now, create sockets for all configured listeners */
+        for (i = 0; i < listen_ctx_count; i++) {
+            if (create_and_bind(EV_A_ NULL, local_port, listen_ctx_list[i]) == -1) {
+                FATAL("bind() error");
+            }
+        }
     } else {
         LOGI("TCP relay disabled");
     }

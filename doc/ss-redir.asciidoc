@@ -83,10 +83,6 @@ Specify max number of open files.
 +
 Only available on Linux.
 
--b <local_address>::
-Specify the local address to use while this client is making outbound 
-connections to the server.
-
 -u::
 Enable UDP relay.
 +

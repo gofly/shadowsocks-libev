@@ -124,48 +124,6 @@ hash_key_fill(char *out_key, const int af, const struct sockaddr_storage *addr)
     memcpy(out_key + sizeof(int), (const uint8_t *)addr, sizeof(struct sockaddr_storage));
 }
 
-static char *
-get_addr_str(const struct sockaddr *sa, bool has_port)
-{
-    static char s[SS_ADDRSTRLEN];
-    memset(s, 0, SS_ADDRSTRLEN);
-    char addr[INET6_ADDRSTRLEN] = { 0 };
-    char port[PORTSTRLEN]       = { 0 };
-    uint16_t p;
-    struct sockaddr_in sa_in;
-    struct sockaddr_in6 sa_in6;
-
-    switch (sa->sa_family) {
-    case AF_INET:
-        memcpy(&sa_in, sa, sizeof(struct sockaddr_in));
-        inet_ntop(AF_INET, &sa_in.sin_addr, addr, INET_ADDRSTRLEN);
-        p = ntohs(sa_in.sin_port);
-        sprintf(port, "%d", p);
-        break;
-
-    case AF_INET6:
-        memcpy(&sa_in6, sa, sizeof(struct sockaddr_in6));
-        inet_ntop(AF_INET6, &sa_in6.sin6_addr, addr, INET6_ADDRSTRLEN);
-        p = ntohs(sa_in6.sin6_port);
-        sprintf(port, "%d", p);
-        break;
-
-    default:
-        strncpy(s, "Unknown AF", SS_ADDRSTRLEN);
-    }
-
-    int addr_len = strlen(addr);
-    int port_len = strlen(port);
-    memcpy(s, addr, addr_len);
-
-    if (has_port) {
-        memcpy(s + addr_len + 1, port, port_len);
-        s[addr_len] = ':';
-    }
-
-    return s;
-}
-
 int
 create_remote_socket(int ipv6)
 {
@@ -291,22 +249,28 @@ create_server_socket(const char *host, const char *port)
         }
 #endif
 
-        int sol    = rp->ai_family == AF_INET ? SOL_IP : SOL_IPV6;
-        int flag_t = rp->ai_family == AF_INET ? IP_TRANSPARENT : IPV6_TRANSPARENT;
-        int flag_r = rp->ai_family == AF_INET ? IP_RECVORIGDSTADDR : IPV6_RECVORIGDSTADDR;
-
-        if (setsockopt(server_sock, sol, flag_t, &opt, sizeof(opt))) {
-            ERROR("[udp] setsockopt IP_TRANSPARENT failed");
-            close(server_sock);
-            server_sock = -1;
-            continue;
-        }
-
-        if (setsockopt(server_sock, sol, flag_r, &opt, sizeof(opt))) {
-            ERROR("[udp] setsockopt IP_RECVORIGDSTADDR failed");
-            close(server_sock);
-            server_sock = -1;
-            continue;
+        if (rp->ai_family == AF_INET) {
+            if (setsockopt(server_sock, SOL_IP, IP_TRANSPARENT, &opt, sizeof(opt)) ||
+                setsockopt(server_sock, SOL_IP, IP_RECVORIGDSTADDR, &opt, sizeof(opt))) {
+                ERROR("[udp] setsockopt for IPv4 TPROXY failed");
+                close(server_sock);
+                server_sock = -1;
+                continue;
+            }
+        } else { // AF_INET6
+            if (setsockopt(server_sock, SOL_IPV6, IPV6_TRANSPARENT, &opt, sizeof(opt)) ||
+                setsockopt(server_sock, SOL_IPV6, IPV6_RECVORIGDSTADDR, &opt, sizeof(opt))) {
+                ERROR("[udp] setsockopt for IPv6 TPROXY failed");
+                close(server_sock);
+                server_sock = -1;
+                continue;
+            }
+            /* For dual-stack sockets, we must set the IPv4 options as well */
+            if (setsockopt(server_sock, SOL_IP, IP_TRANSPARENT, &opt, sizeof(opt)) ||
+                setsockopt(server_sock, SOL_IP, IP_RECVORIGDSTADDR, &opt, sizeof(opt))) {
+                /* This is not a fatal error, as it might fail on IPv6-only systems */
+                LOGI("[udp] could not set IPv4 TPROXY options on IPv6 socket (this is expected on IPv6-only systems)");
+            }
         }
 
         s = bind(server_sock, rp->ai_addr, rp->ai_addrlen);
@@ -475,24 +439,51 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
         LOGI("[udp] remote_sendto fragmentation MTU maybe: " SSIZE_FMT, buf->len + PACKET_HEADER_SIZE);
     }
 
-    /* Create a new socket for each reply to correctly spoof source address */
-    int reply_fd = socket(dst_addr.ss_family, SOCK_DGRAM, 0);
+    /*
+     * To handle mixed IPv4/IPv6 scenarios (e.g., IPv4 client to IPv6 dest),
+     * we consistently create an IPv6 socket for replies. If the spoofed source
+     * (`dst_addr`) is IPv4, we convert it to an IPv4-mapped IPv6 address for binding.
+     * This dual-stack socket can then send to both IPv4 and IPv6 clients.
+     */
+    int reply_fd = socket(AF_INET6, SOCK_DGRAM, 0);
     if (reply_fd == -1) {
         ERROR("[udp] failed to create reply socket");
         goto CLEAN_UP;
     }
 
-    int opt = 1;
-    int sol = (dst_addr.ss_family == AF_INET) ? SOL_IP : SOL_IPV6;
-    int flag_t = (dst_addr.ss_family == AF_INET) ? IP_TRANSPARENT : IPV6_TRANSPARENT;
+    /* Allow this socket to handle both IPv4 and IPv6 */
+    int ipv6only = 0;
+    setsockopt(reply_fd, IPPROTO_IPV6, IPV6_V6ONLY, &ipv6only, sizeof(ipv6only));
 
-    if (setsockopt(reply_fd, sol, flag_t, &opt, sizeof(opt)) != 0) {
+    int opt = 1;
+    /* We need both IPv6 and IPv4 transparent options for the dual-stack socket */
+    if (setsockopt(reply_fd, SOL_IPV6, IPV6_TRANSPARENT, &opt, sizeof(opt)) != 0 ||
+        setsockopt(reply_fd, SOL_IP, IP_TRANSPARENT, &opt, sizeof(opt)) != 0) {
         ERROR("[udp] failed to set IP_TRANSPARENT on reply socket");
         close(reply_fd);
         goto CLEAN_UP;
     }
 
-    if (bind(reply_fd, (struct sockaddr *)&dst_addr, get_sockaddr_len((struct sockaddr *)&dst_addr)) != 0) {
+    struct sockaddr_storage bind_addr;
+    socklen_t bind_addr_len;
+
+    /* Convert original destination to IPv4-mapped IPv6 if necessary for binding */
+    if (dst_addr.ss_family == AF_INET) {
+        struct sockaddr_in *v4_addr = (struct sockaddr_in *)&dst_addr;
+        struct sockaddr_in6 v6_mapped_addr = {0};
+        v6_mapped_addr.sin6_family = AF_INET6;
+        v6_mapped_addr.sin6_port = v4_addr->sin_port;
+        v6_mapped_addr.sin6_addr.s6_addr[10] = 0xff;
+        v6_mapped_addr.sin6_addr.s6_addr[11] = 0xff;
+        memcpy(&v6_mapped_addr.sin6_addr.s6_addr[12], &v4_addr->sin_addr, sizeof(struct in_addr));
+        memcpy(&bind_addr, &v6_mapped_addr, sizeof(v6_mapped_addr));
+        bind_addr_len = sizeof(v6_mapped_addr);
+    } else {
+        memcpy(&bind_addr, &dst_addr, sizeof(dst_addr));
+        bind_addr_len = sizeof(struct sockaddr_in6);
+    }
+
+    if (bind(reply_fd, (struct sockaddr *)&bind_addr, bind_addr_len) != 0) {
         ERROR("[udp] failed to bind reply socket to spoofed source");
         close(reply_fd);
         goto CLEAN_UP;
@@ -570,8 +561,10 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
     for (cmsg = CMSG_FIRSTHDR(&msgh); cmsg != NULL; cmsg = CMSG_NXTHDR(&msgh, cmsg)) {
         if (cmsg->cmsg_level == SOL_IP && cmsg->cmsg_type == IP_RECVORIGDSTADDR) {
             memcpy(&dst_addr, CMSG_DATA(cmsg), sizeof(struct sockaddr_in));
+            dst_addr.ss_family = AF_INET;
         } else if (cmsg->cmsg_level == SOL_IPV6 && cmsg->cmsg_type == IPV6_RECVORIGDSTADDR) {
             memcpy(&dst_addr, CMSG_DATA(cmsg), sizeof(struct sockaddr_in6));
+            dst_addr.ss_family = AF_INET6;
         }
     }
 
@@ -802,9 +795,6 @@ free_udprelay()
     while (server_num > 0) {
         server_ctx_t *server_ctx = server_ctx_list[--server_num];
         ev_io_stop(loop, &server_ctx->io);
-        /* Use a temporary variable to hold the pointer for ss_free */
-        void *status_ptr = (void *)server_ctx->remote_status;
-        ss_free(status_ptr);
         close(server_ctx->fd);
         cache_delete(server_ctx->conn_cache, 0);
         ss_free(server_ctx);

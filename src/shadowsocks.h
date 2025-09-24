@@ -25,7 +25,6 @@
 typedef struct {
     /*  Required  */
     char *remote_host;    // hostname or ip of remote server
-    char *local_addr;     // local ip to bind
     char *method;         // encryption method
     char *password;       // password of remote server
     int remote_port;      // port number of remote server
@@ -46,7 +45,6 @@ typedef struct {
  *
  * const profile_t EXAMPLE_PROFILE = {
  *  .remote_host = "example.com",
- *  .local_addr = "127.0.0.1",
  *  .method = "bf-cfb",
  *  .password = "barfoo!",
  *  .remote_port = 8338,

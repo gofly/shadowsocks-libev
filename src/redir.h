@@ -32,10 +32,8 @@
 #include "jconf.h"
 
 typedef struct listen_ctx {
-    ev_io io;
     int remote_num;
     int timeout;
-    int fd;
     int mptcp;
     int tos;
     volatile bool *remote_status;
@@ -78,7 +76,6 @@ typedef struct remote {
     remote_ctx_t *recv_ctx;
     remote_ctx_t *send_ctx;
     struct server *server;
-    uint32_t counter;
     struct sockaddr *addr;
 } remote_t;
 

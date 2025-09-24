@@ -27,6 +27,7 @@
 #include "winsock.h"
 #else
 #include <sys/socket.h>
+#include <stdbool.h>
 #endif
 
 #if defined(HAVE_LINUX_TCP_H)
@@ -85,14 +86,11 @@ int construct_udprelay_header(const struct sockaddr_storage *in_addr,
                               char *addr_header);
 int parse_udprelay_header(const char *buf, const size_t buf_len,
                           char *host, char *port, struct sockaddr_storage *storage);
+char *get_addr_str(const struct sockaddr *sa, bool has_port);
 
 #ifdef SET_INTERFACE
 int setinterface(int socket_fd, const char *interface_name);
 #endif
-
-int parse_local_addr(struct sockaddr_storage *storage_v4,
-                     struct sockaddr_storage *storage_v6,
-                     const char *host);
 
 int bind_to_addr(struct sockaddr_storage *storage, int socket_fd);
 

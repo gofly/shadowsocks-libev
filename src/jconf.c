@@ -243,12 +243,6 @@ read_jconf(const char *file)
                 }
             } else if (strcmp(name, "server_port") == 0) {
                 conf.remote_port = to_string(value);
-            } else if (strcmp(name, "local_address") == 0) {
-                conf.local_addr = to_string(value);
-            } else if (strcmp(name, "local_ipv4_address") == 0) {
-                conf.local_addr_v4 = to_string(value);
-            } else if (strcmp(name, "local_ipv6_address") == 0) {
-                conf.local_addr_v6 = to_string(value);
             } else if (strcmp(name, "local_port") == 0) {
                 conf.local_port = to_string(value);
             } else if (strcmp(name, "password") == 0) {

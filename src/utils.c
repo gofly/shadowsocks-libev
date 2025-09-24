@@ -278,7 +278,7 @@ ss_realloc(void *ptr, size_t new_size)
 int
 ss_is_ipv6addr(const char *addr)
 {
-    return strcmp(addr, ":") > 0;
+    return strchr(addr, ':') != NULL;
 }
 
 void
@@ -334,8 +334,6 @@ usage()
     printf(
         "       [-n <number>]              Max number of open files.\n");
 #endif
-    printf(
-        "       [-b <local_address>]       Local address to bind.\n");
     printf("\n");
     printf(
         "       [-u]                       Enable UDP relay.\n");

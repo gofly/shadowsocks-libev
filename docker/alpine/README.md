@@ -107,7 +107,6 @@ Don't forget to share internet with your friends.
 {
     "server": "your-vps-ip",
     "server_port": 8388,
-    "local_address": "0.0.0.0",
     "local_port": 1080,
     "password": "9MLSpPmNt",
     "timeout": 600,

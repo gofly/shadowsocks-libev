@@ -53,6 +53,7 @@
 #include "cache.h"
 #include "udprelay.h"
 #include "probe.h"
+#include "metrics.h"
 #include "winsock.h"
 #define MAX_UDP_CONN_NUM 256
 
@@ -438,6 +439,7 @@ remote_timeout_cb(EV_P_ ev_timer *watcher, int revents)
     if (remote_ctx->state == STATE_AWAITING_REPLY) {
         const char *addr_str = get_addr_str(server_ctx->remote_addr[remote_ctx->remote_idx], true);
         LOGI("[udprelay] session timed out for remote %d (%s) waiting for reply.", remote_ctx->remote_idx, addr_str);
+        metrics_inc_remote_udp_session_timeouts_total(remote_ctx->remote_idx, addr_str);
     } else {
         if (verbose) LOGI("[udp] idle session timed out.");
     }
@@ -567,6 +569,9 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
 
     ssize_t s = sendto(reply_fd, buf->data, buf->len, 0,
                    (struct sockaddr *)&mapped_src_addr, remote_src_addr_len);
+    if (s > 0) {
+        metrics_inc_udp_tx_bytes(s);
+    }
 
     close(reply_fd);
 
@@ -627,6 +632,7 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
         LOGI("[udp] server_recv_recvfrom fragmentation: " SSIZE_FMT, r + PACKET_HEADER_SIZE);
     }
     buf->len = r;
+    metrics_inc_udp_rx_bytes(r);
 
     struct cmsghdr *cmsg;
     for (cmsg = CMSG_FIRSTHDR(&msgh); cmsg != NULL; cmsg = CMSG_NXTHDR(&msgh, cmsg)) {
@@ -746,7 +752,11 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
 
         /* 插入 cache（cache 应复制 key 内容） */
         cache_insert(conn_cache, key, HASH_KEY_LEN, (void *)remote_ctx);
-
+        const char *addr_str = get_addr_str(server_ctx->remote_addr[remote_ctx->remote_idx], true);
+        metrics_inc_remote_udp_sessions(remote_ctx->remote_idx, addr_str);
+        metrics_inc_remote_udp_sessions_total(remote_ctx->remote_idx, addr_str);
+        metrics_inc_udp_sessions_total();
+        metrics_set_udp_sessions(HASH_COUNT(conn_cache->entries));
         ev_io_start(EV_A_ & remote_ctx->io);
         ev_timer_start(EV_A_ & remote_ctx->watcher);
     }
@@ -816,6 +826,8 @@ free_cb(void *key, void *element)
 {
     remote_ctx_t *remote_ctx = (remote_ctx_t *)element;
     if (verbose) LOGI("[udp] freeing remote_ctx %p", (void *)remote_ctx);
+    metrics_dec_remote_udp_sessions(remote_ctx->remote_idx);
+    metrics_set_udp_sessions(HASH_COUNT(remote_ctx->server_ctx->conn_cache->entries));
     if (remote_ctx) close_and_free_remote(EV_DEFAULT, remote_ctx);
 }
 

@@ -32,6 +32,7 @@
 #include "utils.h"
 #include "netutils.h"
 #include "udprelay.h"
+#include "metrics.h"
 
 #define MAX_SERVERS 32
 
@@ -147,7 +148,7 @@ static void udp_probe_recv_cb(EV_P_ ev_io *w, int revents) {
             }
         }
     }
-
+    
     if (success) {
         udp_probe_failure_count[p_ctx->remote_idx] = 0;
         udp_probe_success_count[p_ctx->remote_idx]++;
@@ -156,6 +157,7 @@ static void udp_probe_recv_cb(EV_P_ ev_io *w, int revents) {
             udp_probe_success_count[p_ctx->remote_idx] >= probe_up_threshold) {
             LOGI("[probe] remote %d is back online after %d successful probes.", p_ctx->remote_idx, udp_probe_success_count[p_ctx->remote_idx]);
             p_ctx->server_ctx->remote_status[p_ctx->remote_idx] = true;
+            metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, true);
         }
     } else {
         udp_probe_success_count[p_ctx->remote_idx] = 0;
@@ -165,8 +167,13 @@ static void udp_probe_recv_cb(EV_P_ ev_io *w, int revents) {
             udp_probe_failure_count[p_ctx->remote_idx] >= probe_down_threshold) {
             LOGI("[probe] remote %d is offline after %d failed probes.", p_ctx->remote_idx, udp_probe_failure_count[p_ctx->remote_idx]);
             p_ctx->server_ctx->remote_status[p_ctx->remote_idx] = false;
+            metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, false);
         }
+
+        metrics_inc_remote_probe_failures_total(p_ctx->remote_idx, addr_str);
     }
+
+    metrics_set_remote_server_latency(p_ctx->remote_idx, addr_str, success ? latency*1000 : 0);
 
     bfree(buf);
     ss_free(buf);
@@ -184,7 +191,11 @@ static void udp_probe_timeout_cb(EV_P_ ev_timer *w, int revents) {
         udp_probe_failure_count[p_ctx->remote_idx] >= probe_down_threshold) {
         LOGI("[probe] remote %d is offline after %d probe timeouts.", p_ctx->remote_idx, udp_probe_failure_count[p_ctx->remote_idx]);
         p_ctx->server_ctx->remote_status[p_ctx->remote_idx] = false;
+        metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, false);
     }
+
+    metrics_inc_remote_probe_failures_total(p_ctx->remote_idx, addr_str);
+
     udp_probe_cleanup(EV_A_ p_ctx);
 }
 
@@ -239,6 +250,8 @@ static void start_one_udp_probe(EV_P_ server_ctx_t *s_ctx, int idx) {
         close(probefd);
         return;
     }
+
+    metrics_inc_remote_probes_total(idx, addr_str);
 
     sendto(probefd, buf->data, buf->len, 0, remote_addr, get_sockaddr_len(remote_addr));
     bfree(buf);

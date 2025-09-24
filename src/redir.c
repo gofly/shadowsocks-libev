@@ -54,6 +54,7 @@
 #include "redir.h"
 #include "udprelay.h"
 #include "probe.h"
+#include "metrics.h"
 
 #ifndef EAGAIN
 #define EAGAIN EWOULDBLOCK
@@ -262,6 +263,7 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
     }
 
     remote->buf->len += r;
+    metrics_inc_tcp_rx_bytes(r);
 
     if (verbose) {
         uint16_t port = 0;
@@ -443,6 +445,10 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
     }
 
     int s = send(server->fd, server->buf->data, server->buf->len, 0);
+
+    if (s > 0) {
+        metrics_inc_tcp_tx_bytes(s);
+    }
 
     if (s == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -719,6 +725,8 @@ close_and_free_server(EV_P_ server_t *server)
         ev_io_stop(EV_A_ & server->send_ctx->io);
         ev_io_stop(EV_A_ & server->recv_ctx->io);
         ev_timer_stop(EV_A_ & server->delayed_connect_watcher);
+        metrics_dec_remote_tcp_connections(server->remote_idx);
+        metrics_dec_tcp_connections();
         close(server->fd);
         free_server(server);
     }
@@ -737,6 +745,7 @@ handle_tcp_fail(EV_P_ server_t *server)
             LOGI("tcp: handling failure for remote index %d", server->remote_idx);
         }
         const char *addr_str = get_addr_str(server->listener->remote_addr[server->remote_idx], true);
+        metrics_inc_remote_tcp_failures_total(server->remote_idx, addr_str);
     }
 
     /*
@@ -761,9 +770,12 @@ start_connect_remote(EV_P_ server_t *server)
 
     struct sockaddr *remote_addr = listener->remote_addr[server->remote_idx];
     const char *addr_str = get_addr_str(remote_addr, true);
+
     if (verbose) {
         LOGI("tcp: attempting to connect to remote %d at %s", server->remote_idx, addr_str);
     }
+
+    metrics_inc_remote_tcp_connections_total(server->remote_idx, addr_str);
 
     int protocol = IPPROTO_TCP;
     if (listener->mptcp < 0) {
@@ -940,6 +952,9 @@ accept_cb(EV_P_ ev_io *w, int revents)
    if (verbose) {
         LOGI("tcp: starting to connect remote for fd %d", serverfd);
     }
+    metrics_inc_tcp_connections();
+    metrics_inc_tcp_connections_total();
+    metrics_inc_remote_tcp_connections(server->remote_idx, get_addr_str(listener->remote_addr[server->remote_idx], true));
     start_connect_remote(EV_A_ server);
 }
 
@@ -959,6 +974,7 @@ signal_cb(EV_P_ ev_signal *w, int revents)
             ev_signal_stop(EV_DEFAULT, &sigint_watcher);
             ev_signal_stop(EV_DEFAULT, &sigterm_watcher);
             ev_signal_stop(EV_DEFAULT, &sigchld_watcher);
+            metrics_cleanup(EV_A);
             probe_cleanup(EV_A);
 
             ev_unloop(EV_A_ EVUNLOOP_ALL);
@@ -970,7 +986,8 @@ signal_cb(EV_P_ ev_signal *w, int revents)
 int
 main(int argc, char **argv)
 {
-    srand(time(NULL));
+    time_t start_time = time(NULL);
+    srand(start_time);
 
     int i, c;
     int pid_flags    = 0;
@@ -990,6 +1007,7 @@ main(int argc, char **argv)
     char *plugin_opts = NULL;
     char *plugin_host = NULL;
     char *plugin_port = NULL;
+    uint16_t metrics_port = 0;
     int probe_interval = 0;
     int probe_timeout = 0;
     int probe_up_count = 0;
@@ -1026,6 +1044,7 @@ main(int argc, char **argv)
         { "probe-up-count", required_argument, NULL, GETOPT_VAL_PROBE_UP_COUNT },
         { "probe-down-count", required_argument, NULL, GETOPT_VAL_PROBE_DOWN_COUNT },
         { "probe-domain", required_argument, NULL, GETOPT_VAL_PROBE_DOMAIN },
+        { "metrics-port", required_argument, NULL, GETOPT_VAL_METRICS_PORT },
         { "help",        no_argument,       NULL, GETOPT_VAL_HELP        },
         { NULL,          0,                 NULL, 0                      }
     };
@@ -1034,7 +1053,7 @@ main(int argc, char **argv)
 
     USE_TTY();
 
-    while ((c = getopt_long(argc, argv, "f:s:p:l:k:t:m:c:b:a:n:huUTv6A",
+    while ((c = getopt_long(argc, argv, "f:s:p:l:k:t:m:c:b:a:n:huUTv6A:",
                             long_options, NULL)) != -1) {
         switch (c) {
         case GETOPT_VAL_FAST_OPEN:
@@ -1075,6 +1094,9 @@ main(int argc, char **argv)
             break;
         case GETOPT_VAL_PROBE_DOMAIN:
             probe_domain = optarg;
+            break;
+        case GETOPT_VAL_METRICS_PORT:
+            metrics_port = atoi(optarg);
             break;
         case GETOPT_VAL_REUSE_PORT:
             reuse_port = 1;
@@ -1269,6 +1291,9 @@ main(int argc, char **argv)
         if (probe_domain == NULL) {
             probe_domain = conf->probe_domain;
         }
+        if (metrics_port == 0) {
+            metrics_port = conf->metrics_port;
+        }
     }
 
     if (remote_num == 0 || remote_port == NULL || local_port == NULL
@@ -1436,6 +1461,11 @@ main(int argc, char **argv)
     struct ev_loop *loop = EV_DEFAULT;
 
     probe_init(EV_A_ probe_interval, probe_timeout, probe_up_count, probe_down_count, probe_domain);
+
+    if (metrics_port > 0) {
+        const char *metrics_addr = "0.0.0.0";
+        metrics_init(EV_A_ metrics_addr, metrics_port, remote_num, start_time);
+    }
 
     LOGI("initializing ciphers... %s", method);
     crypto = crypto_init(password, key, method);

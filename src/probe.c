@@ -32,8 +32,9 @@
 #include "utils.h"
 #include "netutils.h"
 #include "udprelay.h"
+#include "metrics.h"
 
-#define MAX_LISTENERS 32
+#define MAX_SERVERS 32
 
 /* UDP Probe */
 typedef struct udp_probe_ctx {
@@ -42,10 +43,11 @@ typedef struct udp_probe_ctx {
     int remote_idx;
     server_ctx_t *server_ctx;
     crypto_t *crypto;
+    ev_tstamp start_time;
 } udp_probe_ctx_t;
 
 static ev_timer udp_probe_timer;
-static server_ctx_t *udp_servers[MAX_LISTENERS] = { NULL };
+static server_ctx_t *udp_servers[MAX_SERVERS] = { NULL };
 static int probe_timeout_secs = 5;
 static int probe_up_threshold = 1;
 static int probe_down_threshold = 3;
@@ -111,6 +113,9 @@ static void udp_probe_recv_cb(EV_P_ ev_io *w, int revents) {
     buffer_t *buf = ss_malloc(sizeof(buffer_t));
     balloc(buf, MAX_UDP_PACKET_SIZE);
 
+    ev_tstamp latency = ev_time() - p_ctx->start_time;
+    const char *addr_str = get_addr_str(p_ctx->server_ctx->remote_addr[p_ctx->remote_idx], true);
+
     ssize_t r = recv(p_ctx->io.fd, buf->data, MAX_UDP_PACKET_SIZE, 0);
     bool success = false;
     if (r > 0) {
@@ -147,10 +152,13 @@ static void udp_probe_recv_cb(EV_P_ ev_io *w, int revents) {
             udp_probe_success_count[p_ctx->remote_idx] >= probe_up_threshold) {
             LOGI("[udp-probe] remote %d is back online after %d successful probes.", p_ctx->remote_idx, udp_probe_success_count[p_ctx->remote_idx]);
             p_ctx->server_ctx->remote_status[p_ctx->remote_idx] = true;
+            metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, true);
         }
-    } else {
-        /* If already up, we don't need to log anything, just update latency */
+        metrics_set_remote_server_latency(p_ctx->remote_idx, addr_str, latency*1000);
+        
+        /* If already up, we don't need to log anything, just update the metric */
         if (p_ctx->server_ctx->remote_status[p_ctx->remote_idx]) {
+            metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, true);
         }
     } else {
         udp_probe_success_count[p_ctx->remote_idx] = 0;
@@ -160,6 +168,8 @@ static void udp_probe_recv_cb(EV_P_ ev_io *w, int revents) {
             udp_probe_failure_count[p_ctx->remote_idx] >= probe_down_threshold) {
             LOGI("[udp-probe] remote %d is offline after %d failed probes.", p_ctx->remote_idx, udp_probe_failure_count[p_ctx->remote_idx]);
             p_ctx->server_ctx->remote_status[p_ctx->remote_idx] = false;
+            metrics_inc_remote_probe_failures_total(p_ctx->remote_idx, addr_str);
+            metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, false);
         }
     }
 
@@ -179,6 +189,8 @@ static void udp_probe_timeout_cb(EV_P_ ev_timer *w, int revents) {
         udp_probe_failure_count[p_ctx->remote_idx] >= probe_down_threshold) {
         LOGI("[udp-probe] remote %d is offline after %d probe timeouts.", p_ctx->remote_idx, udp_probe_failure_count[p_ctx->remote_idx]);
         p_ctx->server_ctx->remote_status[p_ctx->remote_idx] = false;
+        metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, false);
+        metrics_inc_remote_probe_failures_total(p_ctx->remote_idx, addr_str);
     }
 
     udp_probe_cleanup(EV_A_ p_ctx);
@@ -186,6 +198,9 @@ static void udp_probe_timeout_cb(EV_P_ ev_timer *w, int revents) {
 
 static void start_one_udp_probe(EV_P_ server_ctx_t *s_ctx, int idx) {
     struct sockaddr *remote_addr = s_ctx->remote_addr[idx];
+    const char *addr_str = get_addr_str(remote_addr, true);
+    metrics_inc_remote_probes_total(idx, addr_str);
+
     int probefd = socket(remote_addr->sa_family, SOCK_DGRAM, 0);
     if (probefd == -1) return;
 
@@ -238,6 +253,7 @@ static void start_one_udp_probe(EV_P_ server_ctx_t *s_ctx, int idx) {
     p_ctx->server_ctx = s_ctx;
     p_ctx->remote_idx = idx;
     p_ctx->crypto = s_ctx->crypto;
+    p_ctx->start_time = ev_time();
 
     ev_io_init(&p_ctx->io, udp_probe_recv_cb, probefd, EV_READ);
     ev_timer_init(&p_ctx->watcher, udp_probe_timeout_cb, probe_timeout_secs, 0);
@@ -288,7 +304,7 @@ void probe_init(EV_P_ int udp_interval, int udp_timeout, int up_count, int down_
 
 void probe_add_udp_server(void *server_ptr) {
     server_ctx_t *server = (server_ctx_t *)server_ptr;
-    if (udp_server_count < MAX_LISTENERS) {
+    if (udp_server_count < MAX_SERVERS) {
         udp_servers[udp_server_count++] = server;
         if (server->remote_num > 1 && !ev_is_active(&udp_probe_timer)) {
             ev_timer_start(EV_DEFAULT, &udp_probe_timer);

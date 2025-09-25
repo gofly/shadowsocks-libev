@@ -253,7 +253,7 @@ metrics_init(EV_P_ const char *addr, uint16_t port, int remote_num, time_t start
 
     metrics_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (metrics_fd == -1) {
-        ERROR("metrics: socket");
+        ERROR("[metrics] failed to create socket");
         return;
     }
 
@@ -266,21 +266,21 @@ metrics_init(EV_P_ const char *addr, uint16_t port, int remote_num, time_t start
     sock_addr.sin_family = AF_INET;
     sock_addr.sin_port = htons(port);
     if (inet_pton(AF_INET, addr, &sock_addr.sin_addr) <= 0) {
-        ERROR("metrics: inet_pton");
+        ERROR("[metrics] inet_pton");
         close(metrics_fd);
         metrics_fd = -1;
         return;
     }
 
     if (bind(metrics_fd, (struct sockaddr *)&sock_addr, sizeof(sock_addr)) != 0) {
-        ERROR("metrics: bind");
+        ERROR("[metrics] bind");
         close(metrics_fd);
         metrics_fd = -1;
         return;
     }
 
     if (listen(metrics_fd, SOMAXCONN) != 0) {
-        ERROR("metrics: listen");
+        ERROR("[metrics] listen");
         close(metrics_fd);
         metrics_fd = -1;
         return;
@@ -289,7 +289,7 @@ metrics_init(EV_P_ const char *addr, uint16_t port, int remote_num, time_t start
     ev_io_init(&metrics_watcher, metrics_accept_cb, metrics_fd, EV_READ);
     ev_io_start(EV_A_ &metrics_watcher);
 
-    LOGI("Metrics server started on %s:%d", addr, port);
+    LOGI("[metrics] metrics server started on %s:%d", addr, port);
 }
 
 void

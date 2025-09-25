@@ -49,8 +49,8 @@ to_string(const json_value *value)
     } else if (value->type == json_null) {
         return NULL;
     } else {
-        LOGE("%d", value->type);
-        FATAL("Invalid config format.");
+        LOGE("[jconf] %d", value->type);
+        FATAL("[jconf] invalid config format.");
     }
     return 0;
 }
@@ -148,7 +148,7 @@ parse_dscp(char *str)
         return dscp;
     }
 
-    LOGE("Invalid DSCP value (%s)", str);
+    LOGE("[jconf] invalid DSCP value (%s)", str);
     return DSCP_DEFAULT;
 }
 
@@ -167,7 +167,7 @@ read_jconf(const char *file)
 
     FILE *f = fopen(file, "rb");
     if (f == NULL) {
-        FATAL("Invalid config path.");
+        FATAL("[jconf] invalid config path.");
     }
 
     fseek(f, 0, SEEK_END);
@@ -175,21 +175,21 @@ read_jconf(const char *file)
     fseek(f, 0, SEEK_SET);
 
     if (pos < 0) {
-        FATAL("Invalid config path.");
+        FATAL("[jconf] invalid config path.");
     }
 
     if (pos >= MAX_CONF_SIZE) {
-        FATAL("Too large config file.");
+        FATAL("[jconf] too large config file.");
     }
 
     buf = ss_malloc(pos + 1);
     if (buf == NULL) {
-        FATAL("No enough memory.");
+        FATAL("[jconf] no enough memory.");
     }
 
     int nread = fread(buf, pos, 1, f);
     if (!nread) {
-        FATAL("Failed to read the config file.");
+        FATAL("[jconf] failed to read the config file.");
     }
     fclose(f);
 
@@ -272,7 +272,7 @@ read_jconf(const char *file)
                                       "invalid config file: option 'reuse_port' must be a boolean");
                 conf.reuse_port = value->u.boolean;
             } else if (strcmp(name, "auth") == 0) {
-                FATAL("One time auth has been deprecated. Try AEAD ciphers instead.");
+                FATAL("[jconf] one time auth has been deprecated. Try AEAD ciphers instead.");
             } else if (strcmp(name, "nofile") == 0) {
                 check_json_value_type(value, json_integer,
                                       "invalid config file: option 'nofile' must be an integer");
@@ -308,7 +308,7 @@ read_jconf(const char *file)
                 else if (strcmp(mode_str, "udp_only") == 0)
                     conf.mode = UDP_ONLY;
                 else
-                    LOGI("ignore unknown mode: %s, use tcp_only as fallback",
+                    LOGI("[jconf] ignore unknown mode: %s, use tcp_only as fallback",
                          mode_str);
 
                 ss_free(mode_str);
@@ -379,7 +379,7 @@ read_jconf(const char *file)
             }
         }
     } else {
-        FATAL("Invalid config file");
+        FATAL("[jconf] invalid config file");
     }
 
     ss_free(buf);

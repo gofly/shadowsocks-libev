@@ -144,7 +144,7 @@ parse_udprelay_header(const char *buf, const size_t buf_len,
         size_t in_addr_len = sizeof(struct in_addr);
         /* need: 1 (atyp) + in_addr_len + 2 (port) */
         if (!REMAIN_AT_LEAST(in_addr_len + 2)) {
-            LOGE("[udp] parse header: IPv4 header too short");
+            LOGE("parse header: IPv4 header too short");
             return 0;
         }
         if (storage != NULL) {
@@ -163,18 +163,18 @@ parse_udprelay_header(const char *buf, const size_t buf_len,
     } else if ((atyp & ADDRTYPE_MASK) == 3) {
         /* Domain name */
         if (!REMAIN_AT_LEAST(1)) {
-            LOGE("[udp] parse header: domain length byte missing");
+            LOGE("parse header: domain length byte missing");
             return 0;
         }
         uint8_t name_len = *(const uint8_t *)(buf + offset);
         /* total needed: 1 (atyp) + 1 (name_len) + name_len + 2 (port) */
         if (!REMAIN_AT_LEAST(1 + name_len + 2)) {
-            LOGE("[udp] parse header: domain header too short (name_len=%d, buf_len=%zu)", name_len, buf_len);
+            LOGE("parse header: domain header too short (name_len=%d, buf_len=%zu)", name_len, buf_len);
             return 0;
         }
         /* guard tmp buffer size */
         if (name_len >= MAX_HOSTNAME_LEN) {
-            LOGE("[udp] parse header: domain name too long (%d >= %d)", name_len, MAX_HOSTNAME_LEN);
+            LOGE("parse header: domain name too long (%d >= %d)", name_len, MAX_HOSTNAME_LEN);
             return 0;
         }
 
@@ -191,7 +191,7 @@ parse_udprelay_header(const char *buf, const size_t buf_len,
                     memset(addr, 0, sizeof(*addr));
                     addr->sin_family = AF_INET;
                     if (inet_pton(AF_INET, tmp, &(addr->sin_addr)) <= 0) {
-                        LOGE("[udp] inet_pton failed for %s", tmp);
+                        LOGE("inet_pton failed for %s", tmp);
                     }
                     memcpy(&addr->sin_port, buf + offset + 1 + name_len, sizeof(uint16_t));
                 } else if (ip.version == 6) {
@@ -199,7 +199,7 @@ parse_udprelay_header(const char *buf, const size_t buf_len,
                     memset(addr6, 0, sizeof(*addr6));
                     addr6->sin6_family = AF_INET6;
                     if (inet_pton(AF_INET6, tmp, &(addr6->sin6_addr)) <= 0) {
-                        LOGE("[udp] inet_pton failed for %s", tmp);
+                        LOGE("inet_pton failed for %s", tmp);
                     }
                     memcpy(&addr6->sin6_port, buf + offset + 1 + name_len, sizeof(uint16_t));
                 } else {
@@ -222,7 +222,7 @@ parse_udprelay_header(const char *buf, const size_t buf_len,
         size_t in6_addr_len = sizeof(struct in6_addr);
         /* need: 1 (atyp) + in6_addr_len + 2 (port) */
         if (!REMAIN_AT_LEAST(in6_addr_len + 2)) {
-            LOGE("[udp] parse header: IPv6 header too short");
+            LOGE("parse header: IPv6 header too short");
             return 0;
         }
         if (storage != NULL) {
@@ -238,13 +238,13 @@ parse_udprelay_header(const char *buf, const size_t buf_len,
         }
         offset += in6_addr_len + 2;
     } else {
-        LOGE("[udp] parse header: unknown atyp %d", atyp);
+        LOGE("parse header: unknown atyp %d", atyp);
         return 0;
     }
 
     /* final sanity */
     if (offset <= 1 || (size_t)offset > buf_len) {
-        LOGE("[udp] invalid header parsing result (offset=%d, buf_len=%zu)", offset, buf_len);
+        LOGE("invalid header parsing result (offset=%d, buf_len=%zu)", offset, buf_len);
         return 0;
     }
 

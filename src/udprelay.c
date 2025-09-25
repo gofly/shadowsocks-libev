@@ -352,15 +352,15 @@ remote_timeout_cb(EV_P_ ev_timer *watcher, int revents)
     }
 
     if (remote_ctx->state == STATE_AWAITING_REPLY) {
-        LOGI("[udp] session timed out waiting for reply from remote %d.", remote_ctx->remote_idx);
+        LOGI("[udprelay] session timed out waiting for reply from remote %d.", remote_ctx->remote_idx);
         const char *addr_str = get_addr_str(server_ctx->remote_addr[remote_ctx->remote_idx], true);
         metrics_inc_remote_udp_session_timeouts_total(remote_ctx->remote_idx, addr_str);
     } else {
-        if (verbose) LOGI("[udp] idle session timed out.");
+        if (verbose) LOGI("[udprelay] idle session timed out.");
     }
 
     if (verbose) {
-        LOGI("[udp] connection timeout for src %s", get_addr_str((struct sockaddr *)&remote_ctx->src_addr, true));
+        LOGI("[udprelay] connection timeout for src %s", get_addr_str((struct sockaddr *)&remote_ctx->src_addr, true));
     }
 
     /* 使用栈上的 key 以移除 cache 条目（触发 free_cb） */

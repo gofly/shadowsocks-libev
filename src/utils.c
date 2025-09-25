@@ -143,22 +143,20 @@ run_as(const char *user)
             if (err == 0 && pwd) {
                 /* setgid first, because we may not be allowed to do it anymore after setuid */
                 if (setgid(pwd->pw_gid) != 0) {
-                    LOGE(
-                        "Could not change group id to that of run_as user '%s': %s",
+                    LOGE("could not change group id to that of run_as user '%s': %s",
                         pwd->pw_name, strerror(errno));
                     return 0;
                 }
 
 #ifndef __CYGWIN__
                 if (initgroups(pwd->pw_name, pwd->pw_gid) == -1) {
-                    LOGE("Could not change supplementary groups for user '%s'.", pwd->pw_name);
+                    LOGE("could not change supplementary groups for user '%s'.", pwd->pw_name);
                     return 0;
                 }
 #endif
 
                 if (setuid(pwd->pw_uid) != 0) {
-                    LOGE(
-                        "Could not change user id to that of run_as user '%s': %s",
+                    LOGE("could not change user id to that of run_as user '%s': %s",
                         pwd->pw_name, strerror(errno));
                     return 0;
                 }
@@ -174,8 +172,7 @@ run_as(const char *user)
             } else if (buflen >= 16 * 1024) {
                 /* If getpwnam_r() seems defective, call it quits rather than
                  * keep on allocating ever larger buffers until we crash. */
-                LOGE(
-                    "getpwnam_r() requires more than %u bytes of buffer space.",
+                LOGE("getpwnam_r() requires more than %u bytes of buffer space.",
                     (unsigned)buflen);
                 return 0;
             }
@@ -196,7 +193,7 @@ run_as(const char *user)
             return 0;
         }
         if (initgroups(pwd->pw_name, pwd->pw_gid) == -1) {
-            LOGE("Could not change supplementary groups for user '%s'.", pwd->pw_name);
+            LOGE("could not change supplementary groups for user '%s'.", pwd->pw_name);
             return 0;
         }
         if (setuid(pwd->pw_uid) != 0) {
@@ -454,14 +451,13 @@ set_nofile(int nofile)
 
     if (setrlimit(RLIMIT_NOFILE, &limit) < 0) {
         if (errno == EPERM) {
-            LOGE(
-                "insufficient permission to change NOFILE, not starting as root?");
+            LOGE("insufficient permission to change NOFILE, not starting as root?");
             return -1;
         } else if (errno == EINVAL) {
             LOGE("invalid nofile, decrease nofile and try again");
             return -1;
         } else {
-            LOGE("setrlimit failed: %s", strerror(errno));
+            ERROR("setrlimit failed");
             return -1;
         }
     }

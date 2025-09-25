@@ -150,7 +150,7 @@ static void udp_probe_recv_cb(EV_P_ ev_io *w, int revents) {
 
         if (!p_ctx->server_ctx->remote_status[p_ctx->remote_idx] &&
             udp_probe_success_count[p_ctx->remote_idx] >= probe_up_threshold) {
-            LOGI("[udp-probe] remote %d is back online after %d successful probes.", p_ctx->remote_idx, udp_probe_success_count[p_ctx->remote_idx]);
+            LOGI("[probe] remote %d is back online after %d successful probes.", p_ctx->remote_idx, udp_probe_success_count[p_ctx->remote_idx]);
             p_ctx->server_ctx->remote_status[p_ctx->remote_idx] = true;
             metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, true);
         }
@@ -166,7 +166,7 @@ static void udp_probe_recv_cb(EV_P_ ev_io *w, int revents) {
 
         if (p_ctx->server_ctx->remote_status[p_ctx->remote_idx] &&
             udp_probe_failure_count[p_ctx->remote_idx] >= probe_down_threshold) {
-            LOGI("[udp-probe] remote %d is offline after %d failed probes.", p_ctx->remote_idx, udp_probe_failure_count[p_ctx->remote_idx]);
+            LOGI("[probe] remote %d is offline after %d failed probes.", p_ctx->remote_idx, udp_probe_failure_count[p_ctx->remote_idx]);
             p_ctx->server_ctx->remote_status[p_ctx->remote_idx] = false;
             metrics_inc_remote_probe_failures_total(p_ctx->remote_idx, addr_str);
             metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, false);
@@ -187,7 +187,7 @@ static void udp_probe_timeout_cb(EV_P_ ev_timer *w, int revents) {
     const char *addr_str = get_addr_str(p_ctx->server_ctx->remote_addr[p_ctx->remote_idx], true);
     if (p_ctx->server_ctx->remote_status[p_ctx->remote_idx] &&
         udp_probe_failure_count[p_ctx->remote_idx] >= probe_down_threshold) {
-        LOGI("[udp-probe] remote %d is offline after %d probe timeouts.", p_ctx->remote_idx, udp_probe_failure_count[p_ctx->remote_idx]);
+        LOGI("[probe] remote %d is offline after %d probe timeouts.", p_ctx->remote_idx, udp_probe_failure_count[p_ctx->remote_idx]);
         p_ctx->server_ctx->remote_status[p_ctx->remote_idx] = false;
         metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, false);
         metrics_inc_remote_probe_failures_total(p_ctx->remote_idx, addr_str);
@@ -216,7 +216,7 @@ static void start_one_udp_probe(EV_P_ server_ctx_t *s_ctx, int idx) {
 
     struct sockaddr_storage dns_server_addr;
     if (get_sockaddr("8.8.8.8", "53", &dns_server_addr, 1, 0) != 0) {
-        LOGE("[udp-probe] failed to resolve 8.8.8.8:53");
+        LOGE("[probe] failed to resolve 8.8.8.8:53");
         close(probefd);
         return;
     }

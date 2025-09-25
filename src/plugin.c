@@ -162,7 +162,7 @@ start_obfsproxy(const char *plugin,
     if (plugin_opts != NULL) {
         opts_dump = strndup(plugin_opts, OBFSPROXY_OPTS_MAX);
         if (!opts_dump) {
-            ERROR("start_obfsproxy strndup failed");
+            ERROR("[plugin] start_obfsproxy strndup failed");
             if (env != NULL) {
                 cork_env_free(env);
             }
@@ -304,7 +304,7 @@ stop_plugin()
     if (sub != NULL) {
         cork_subprocess_abort(sub);
         if (cork_subprocess_wait(sub) == -1) {
-            LOGI("error on terminating the plugin.");
+            LOGI("[plugin] error on terminating the plugin.");
         }
         cork_subprocess_free(sub);
     }

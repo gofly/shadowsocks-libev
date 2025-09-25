@@ -271,7 +271,7 @@ const cipher_kt_t *
 aead_get_cipher_type(int method)
 {
     if (method < AES128GCM || method >= AEAD_CIPHER_NUM) {
-        LOGE("aead_get_cipher_type(): Illegal method");
+        LOGE("[aead] aead_get_cipher_type(): Illegal method");
         return NULL;
     }
 
@@ -283,7 +283,7 @@ aead_get_cipher_type(int method)
     const char *ciphername  = supported_aead_ciphers[method];
     const char *mbedtlsname = supported_aead_ciphers_mbedtls[method];
     if (strcmp(mbedtlsname, CIPHER_UNSUPPORTED) == 0) {
-        LOGE("Cipher %s currently is not supported by mbed TLS library",
+        LOGE("[aead] cipher %s currently is not supported by mbed TLS library",
              ciphername);
         return NULL;
     }
@@ -295,7 +295,7 @@ aead_cipher_ctx_set_key(cipher_ctx_t *cipher_ctx, int enc)
 {
     const digest_type_t *md = mbedtls_md_info_from_string("SHA1");
     if (md == NULL) {
-        FATAL("SHA1 Digest not found in crypto library");
+        FATAL("[aead] SHA1 Digest not found in crypto library");
     }
 
     int err = crypto_hkdf(md,
@@ -304,7 +304,7 @@ aead_cipher_ctx_set_key(cipher_ctx_t *cipher_ctx, int enc)
                           (uint8_t *)SUBKEY_INFO, strlen(SUBKEY_INFO),
                           cipher_ctx->skey, cipher_ctx->cipher->key_len);
     if (err) {
-        FATAL("Unable to generate subkey");
+        FATAL("[aead] unable to generate subkey");
     }
 
     memset(cipher_ctx->nonce, 0, cipher_ctx->cipher->nonce_len);
@@ -316,16 +316,16 @@ aead_cipher_ctx_set_key(cipher_ctx_t *cipher_ctx, int enc)
     if (cipher_ctx->aes256gcm_ctx != NULL) {
         if (crypto_aead_aes256gcm_beforenm(cipher_ctx->aes256gcm_ctx,
                                            cipher_ctx->skey) != 0) {
-            FATAL("Cannot set libsodium cipher key");
+            FATAL("[aead] cannot set libsodium cipher key");
         }
         return;
     }
     if (mbedtls_cipher_setkey(cipher_ctx->evp, cipher_ctx->skey,
                               cipher_ctx->cipher->key_len * 8, enc) != 0) {
-        FATAL("Cannot set mbed TLS cipher key");
+        FATAL("[aead] cannot set mbed TLS cipher key");
     }
     if (mbedtls_cipher_reset(cipher_ctx->evp) != 0) {
-        FATAL("Cannot finish preparation of mbed TLS cipher context");
+        FATAL("[aead] cannot finish preparation of mbed TLS cipher context");
     }
 }
 
@@ -333,7 +333,7 @@ static void
 aead_cipher_ctx_init(cipher_ctx_t *cipher_ctx, int method, int enc)
 {
     if (method < AES128GCM || method >= AEAD_CIPHER_NUM) {
-        LOGE("cipher_context_init(): Illegal method");
+        LOGE("[aead] cipher_context_init(): Illegal method");
         return;
     }
 
@@ -355,13 +355,13 @@ aead_cipher_ctx_init(cipher_ctx_t *cipher_ctx, int method, int enc)
         cipher_evp_t *evp = cipher_ctx->evp;
         mbedtls_cipher_init(evp);
         if (mbedtls_cipher_setup(evp, cipher) != 0) {
-            FATAL("Cannot initialize mbed TLS cipher context");
+            FATAL("[aead] cannot initialize mbed TLS cipher context");
         }
     }
 
     if (cipher == NULL) {
-        LOGE("Cipher %s not found in mbed TLS library", ciphername);
-        FATAL("Cannot initialize mbed TLS cipher");
+        LOGE("[aead] cipher %s not found in mbed TLS library", ciphername);
+        FATAL("[aead] cannot initialize mbed TLS cipher");
     }
 
 #ifdef SS_DEBUG
@@ -470,7 +470,7 @@ aead_decrypt_all(buffer_t *ciphertext, cipher_t *cipher, size_t capacity)
     memcpy(salt, ciphertext->data, salt_len);
 
     if (ppbloom_check((void *)salt, salt_len) == 1) {
-        LOGE("crypto: AEAD: repeat salt detected");
+        LOGE("[aead] crypto: AEAD: repeat salt detected");
         return CRYPTO_ERROR;
     }
 
@@ -663,7 +663,7 @@ aead_decrypt(buffer_t *ciphertext, cipher_ctx_t *cipher_ctx, size_t capacity)
         memcpy(cipher_ctx->salt, cipher_ctx->chunk->data, salt_len);
 
         if (ppbloom_check((void *)cipher_ctx->salt, salt_len) == 1) {
-            LOGE("crypto: AEAD: repeat salt detected");
+            LOGE("[aead] crypto: AEAD: repeat salt detected");
             return CRYPTO_ERROR;
         }
 
@@ -705,7 +705,7 @@ aead_decrypt(buffer_t *ciphertext, cipher_ctx_t *cipher_ctx, size_t capacity)
     // Add the salt to bloom filter
     if (cipher_ctx->init == 1) {
         if (ppbloom_check((void *)cipher_ctx->salt, salt_len) == 1) {
-            LOGE("crypto: AEAD: repeat salt detected");
+            LOGE("[aead] crypto: AEAD: repeat salt detected");
             return CRYPTO_ERROR;
         }
         ppbloom_add((void *)cipher_ctx->salt, salt_len);
@@ -723,7 +723,7 @@ cipher_t *
 aead_key_init(int method, const char *pass, const char *key)
 {
     if (method < AES128GCM || method >= AEAD_CIPHER_NUM) {
-        LOGE("aead_key_init(): Illegal method");
+        LOGE("[aead] aead_key_init(): Illegal method");
         return NULL;
     }
 
@@ -731,8 +731,8 @@ aead_key_init(int method, const char *pass, const char *key)
     memset(cipher, 0, sizeof(cipher_t));
 
     if (method < CHACHA20POLY1305IETF && aead_get_cipher_type(method) == NULL) {
-        LOGE("Cipher %s not found in crypto library", supported_aead_ciphers[method]);
-        FATAL("Cannot initialize cipher");
+        LOGE("[aead] cipher %s not found in crypto library", supported_aead_ciphers[method]);
+        FATAL("[aead] cannot initialize cipher");
     }
 
     if (key != NULL)
@@ -743,7 +743,7 @@ aead_key_init(int method, const char *pass, const char *key)
                                             supported_aead_ciphers_key_size[method]);
 
     if (cipher->key_len == 0) {
-        FATAL("Cannot generate key and nonce");
+        FATAL("[aead] cannot generate key and nonce");
     }
 
     cipher->nonce_len = supported_aead_ciphers_nonce_size[method];
@@ -764,7 +764,7 @@ aead_init(const char *pass, const char *key, const char *method)
                 break;
             }
         if (m >= AEAD_CIPHER_NUM) {
-            LOGE("Invalid cipher name: %s, use chacha20-ietf-poly1305 instead", method);
+            LOGE("[aead] invalid cipher name: %s, use chacha20-ietf-poly1305 instead", method);
             m = CHACHA20POLY1305IETF;
         }
     }

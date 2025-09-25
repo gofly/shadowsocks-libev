@@ -105,7 +105,7 @@ crypto_md5(const unsigned char *d, size_t n, unsigned char *md)
     }
 #if MBEDTLS_VERSION_NUMBER < 0x03000000 && MBEDTLS_VERSION_NUMBER >= 0x02070000
     if (mbedtls_md5_ret(d, n, md) != 0)
-        FATAL("Failed to calculate MD5");
+        FATAL("[crypto] failed to calculate MD5");
 #else
     mbedtls_md5(d, n, md);
 #endif
@@ -121,7 +121,7 @@ entropy_check(void)
 
     if ((fd = open("/dev/random", O_RDONLY)) != -1) {
         if (ioctl(fd, RNDGETENTCNT, &c) == 0 && c < 160) {
-            LOGI("This system doesn't provide enough entropy to quickly generate high-quality random numbers.\n"
+            LOGI("[crypto] This system doesn't provide enough entropy to quickly generate high-quality random numbers.\n"
                  "Installing the rng-utils/rng-tools, jitterentropy or haveged packages may help.\n"
                  "On virtualized Linux environments, also consider using virtio-rng.\n"
                  "The service will not start until enough entropy has been collected.\n");
@@ -139,7 +139,7 @@ crypto_init(const char *password, const char *key, const char *method)
     entropy_check();
     // Initialize sodium for random generator
     if (sodium_init() == -1) {
-        FATAL("Failed to initialize sodium");
+        FATAL("[crypto] failed to initialize sodium");
     }
 
     // Initialize NONCE bloom filter
@@ -152,7 +152,7 @@ crypto_init(const char *password, const char *key, const char *method)
                 break;
             }
         if (m != -1) {
-            LOGI("Stream ciphers are insecure, therefore deprecated, and should be almost always avoided.");
+            LOGI("[crypto] stream ciphers are insecure, therefore deprecated, and should be almost always avoided.");
             cipher_t *cipher = stream_init(password, key, method);
             if (cipher == NULL)
                 return NULL;
@@ -194,7 +194,7 @@ crypto_init(const char *password, const char *key, const char *method)
         }
     }
 
-    LOGE("invalid cipher name: %s", method);
+    LOGE("[crypto] invalid cipher name: %s", method);
     return NULL;
 }
 
@@ -206,7 +206,7 @@ crypto_derive_key(const char *pass, uint8_t *key, size_t key_len)
 
     const digest_type_t *md = mbedtls_md_info_from_string("MD5");
     if (md == NULL) {
-        FATAL("MD5 Digest not found in crypto library");
+        FATAL("[crypto] MD5 Digest not found in crypto library");
     }
 
     mbedtls_md_context_t c;
@@ -368,10 +368,10 @@ crypto_parse_key(const char *base64, uint8_t *key, size_t key_len)
     char out_key[out_len];
     rand_bytes(key, key_len);
     base64_encode(out_key, out_len, key, key_len);
-    LOGE("Invalid key for your chosen cipher!");
-    LOGE("It requires a " SIZE_FMT "-byte key encoded with URL-safe Base64", key_len);
-    LOGE("Generating a new random key: %s", out_key);
-    FATAL("Please use the key above or input a valid key");
+    LOGE("[crypto] Invalid key for your chosen cipher!");
+    LOGE("[crypto] It requires a " SIZE_FMT "-byte key encoded with URL-safe Base64", key_len);
+    LOGE("[crypto] Generating a new random key: %s", out_key);
+    FATAL("[crypto] Please use the key above or input a valid key");
     return key_len;
 }
 

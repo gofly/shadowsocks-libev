@@ -162,12 +162,12 @@ create_and_bind(const char *addr, const char *port, int af)
 
     s = getaddrinfo(addr, port, &hints, &result);
     if (s != 0) {
-        LOGI("getaddrinfo: %s", gai_strerror(s));
+        LOGI("[redir] getaddrinfo: %s", gai_strerror(s));
         return -1;
     }
 
     if (result == NULL) {
-        LOGE("Could not bind");
+        LOGE("[redir] Could not bind");
         return -1;
     }
 
@@ -189,7 +189,7 @@ create_and_bind(const char *addr, const char *port, int af)
         if (reuse_port) {
             int err = set_reuseport(listen_sock);
             if (err == 0) {
-                LOGI("tcp port reuse enabled");
+                LOGI("[redir] tcp port reuse enabled");
             }
         }
 
@@ -204,7 +204,7 @@ create_and_bind(const char *addr, const char *port, int af)
             }
 
             if (setsockopt(listen_sock, level, optname, &opt, sizeof(opt)) != 0) {
-                ERROR("setsockopt IP_TRANSPARENT");
+                ERROR("[redir] setsockopt IP_TRANSPARENT");
                 exit(EXIT_FAILURE);
             }
         }
@@ -255,7 +255,7 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
             // continue to wait for recv
             return;
         } else {
-            ERROR("server recv");
+            ERROR("[redir] server recv");
             close_and_free_remote(EV_A_ remote);
             close_and_free_server(EV_A_ server);
             return;
@@ -280,7 +280,7 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
             port = ntohs(sa->sin6_port);
         }
 
-        LOGI("redir to %s:%d, len=%zu, recv=%zd", ipstr, port, remote->buf->len, r);
+        LOGI("[redir] redir to %s:%d, len=%zu, recv=%zd", ipstr, port, remote->buf->len, r);
     }
 
     if (!remote->send_ctx->connected) {
@@ -292,7 +292,7 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
     int err = crypto->encrypt(remote->buf, server->e_ctx, SOCKET_BUF_SIZE);
 
     if (err) {
-        LOGE("invalid password or cipher");
+        LOGE("[redir] invalid password or cipher");
         close_and_free_remote(EV_A_ remote);
         close_and_free_server(EV_A_ server);
         return;
@@ -308,7 +308,7 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
             ev_io_start(EV_A_ & remote->send_ctx->io);
             return;
         } else {
-            ERROR("send");
+            ERROR("[redir] send");
             close_and_free_remote(EV_A_ remote);
             close_and_free_server(EV_A_ server);
             return;
@@ -342,7 +342,7 @@ server_send_cb(EV_P_ ev_io *w, int revents)
                          server->buf->len, 0);
         if (s == -1) {
             if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                ERROR("send");
+                ERROR("[redir] send");
                 close_and_free_remote(EV_A_ remote);
                 close_and_free_server(EV_A_ server);
             }
@@ -375,7 +375,7 @@ delayed_connect_cb(EV_P_ ev_timer *watcher, int revents)
     remote->addr = NULL;
 
     if (r == -1 && errno != CONNECT_IN_PROGRESS) {
-        ERROR("connect");
+        ERROR("[redir] connect");
         close_and_free_remote(EV_A_ remote);
         close_and_free_server(EV_A_ server);
         return;
@@ -425,7 +425,7 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
             // continue to wait for recv
             return;
         } else {
-            ERROR("remote recv");
+            ERROR("[redir] remote recv");
             close_and_free_remote(EV_A_ remote);
             close_and_free_server(EV_A_ server);
             return;
@@ -436,7 +436,7 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
 
     int err = crypto->decrypt(server->buf, server->d_ctx, SOCKET_BUF_SIZE);
     if (err == CRYPTO_ERROR) {
-        LOGE("invalid password or cipher");
+        LOGE("[redir] invalid password or cipher");
         close_and_free_remote(EV_A_ remote);
         close_and_free_server(EV_A_ server);
         return;
@@ -457,7 +457,7 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
             ev_io_stop(EV_A_ & remote_recv_ctx->io);
             ev_io_start(EV_A_ & server->send_ctx->io);
         } else {
-            ERROR("send");
+            ERROR("[redir] send");
             close_and_free_remote(EV_A_ remote);
             close_and_free_server(EV_A_ server);
             return;
@@ -510,7 +510,7 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
             // Construct address header directly into abuf
             int addr_len = construct_udprelay_header(&server->destaddr, abuf->data);
             if (addr_len == 0) {
-                LOGE("failed to construct address header");
+                LOGE("[redir] failed to construct address header");
                 bfree(abuf);
                 close_and_free_remote(EV_A_ remote);
                 close_and_free_server(EV_A_ server);
@@ -525,13 +525,13 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
             // Encrypt the combined buffer ([addr_header][payload]) once
             int err = crypto->encrypt(remote->buf, server->e_ctx, SOCKET_BUF_SIZE);
             if (err) {
-                LOGE("invalid password or cipher");
+                LOGE("[redir] invalid password or cipher");
                 close_and_free_remote(EV_A_ remote);
                 close_and_free_server(EV_A_ server);
                 return;
             }
         } else {
-            ERROR("getpeername");
+            ERROR("[redir] getpeername");
             // not connected
             handle_tcp_fail(EV_A_ server);
             return;
@@ -552,7 +552,7 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
             int optval = 1;
             if (setsockopt(remote->fd, IPPROTO_TCP, TCP_FASTOPEN_CONNECT,
                            (void *)&optval, sizeof(optval)) < 0)
-                FATAL("failed to set TCP_FASTOPEN_CONNECT");
+                FATAL("[redir] failed to set TCP_FASTOPEN_CONNECT");
             s = connect(remote->fd, remote->addr, get_sockaddr_len(remote->addr));
             if (s == 0)
                 s = send(remote->fd, remote->buf->data, remote->buf->len, 0);
@@ -561,7 +561,7 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
                        remote->buf->len, MSG_FASTOPEN, remote->addr,
                        get_sockaddr_len(remote->addr));
 #else
-            FATAL("tcp fast open is not supported on this platform");
+            FATAL("[redir] tcp fast open is not supported on this platform");
 #endif
 
             remote->addr = NULL;
@@ -574,9 +574,9 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
                     if (errno == EOPNOTSUPP || errno == EPROTONOSUPPORT ||
                         errno == ENOPROTOOPT) {
                         fast_open = 0;
-                        LOGE("fast open is not supported on this platform");
+                        LOGE("[redir] fast open is not supported on this platform");
                     } else {
-                        ERROR("fast_open_connect");
+                        ERROR("[redir] fast_open_connect");
                     }
                     handle_tcp_fail(EV_A_ server);
                 }
@@ -589,7 +589,7 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
 
         if (s == -1) {
             if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                ERROR("send");
+                ERROR("[redir] send");
                 /* close current remote and try next */
                 handle_tcp_fail(EV_A_ server);
             }
@@ -741,19 +741,17 @@ handle_tcp_fail(EV_P_ server_t *server)
     }
 
     if (server->listener) {
-        if (verbose) {
-            LOGI("tcp: handling failure for remote index %d", server->remote_idx);
-        }
         const char *addr_str = get_addr_str(server->listener->remote_addr[server->remote_idx], true);
         metrics_inc_remote_tcp_failures_total(server->remote_idx, addr_str);
     }
 
     /*
-     * Do not failover to the next remote on connection failure.
-     * The probing mechanism is now solely responsible for managing remote status.
-     * We just close the server connection and let the client retry.
-     */
-    LOGE("TCP connection to remote %d failed, closing connection.", server->remote_idx);
+    * Do not failover to the next remote on connection failure.
+    * The probing mechanism is now solely responsible for managing remote status.
+    * We just close the server connection and let the client retry.
+    */
+    LOGE("[redir] TCP connection to remote %d failed, closing connection.", server->remote_idx);
+
     close_and_free_server(EV_A_ server);
 }
 
@@ -763,18 +761,16 @@ start_connect_remote(EV_P_ server_t *server)
     listen_ctx_t *listener = server->listener;
 
     if (server->remote_idx >= listener->remote_num) {
-        LOGE("all remote servers failed to connect");
+        LOGE("[redir] all remote servers failed to connect");
         handle_tcp_fail(EV_A_ server);
         return;
     }
 
     struct sockaddr *remote_addr = listener->remote_addr[server->remote_idx];
     const char *addr_str = get_addr_str(remote_addr, true);
-
     if (verbose) {
-        LOGI("tcp: attempting to connect to remote %d at %s", server->remote_idx, addr_str);
+        LOGI("[redir] tcp: attempting to connect to remote %d at %s", server->remote_idx, addr_str);
     }
-
     metrics_inc_remote_tcp_connections_total(server->remote_idx, addr_str);
 
     int protocol = IPPROTO_TCP;
@@ -783,7 +779,7 @@ start_connect_remote(EV_P_ server_t *server)
     }
     int remotefd = socket(remote_addr->sa_family, SOCK_STREAM, protocol);
     if (remotefd == -1) {
-        ERROR("[tcp] socket");
+        ERROR("[redir] tcp: socket");
         handle_tcp_fail(EV_A_ server);
         return;
     }
@@ -811,12 +807,12 @@ start_connect_remote(EV_P_ server_t *server)
     if (listener->tos >= 0) {
         int rc = setsockopt(remotefd, IPPROTO_IP, IP_TOS, &listener->tos, sizeof(listener->tos));
         if (rc < 0 && errno != ENOPROTOOPT) {
-            LOGE("setting ipv4 dscp failed: %d", errno);
+            ERROR("[redir] setting ipv4 dscp failed");
         }
 #ifdef IPV6_TCLASS
         rc = setsockopt(remotefd, IPPROTO_IPV6, IPV6_TCLASS, &listener->tos, sizeof(listener->tos));
         if (rc < 0 && errno != ENOPROTOOPT) {
-            LOGE("setting ipv6 dscp failed: %d", errno);
+            ERROR("[redir] setting ipv6 dscp failed");
         }
 #endif
     }
@@ -825,7 +821,7 @@ start_connect_remote(EV_P_ server_t *server)
     if (listener->mptcp > 1) {
         int err = setsockopt(remotefd, SOL_TCP, listener->mptcp, &opt, sizeof(opt));
         if (err == -1) {
-            ERROR("[tcp] failed to enable out-of-tree multipath TCP");
+            ERROR("[redir] failed to enable out-of-tree multipath TCP");
         }
     } else if (listener->mptcp == 1) {
         int i = 0;
@@ -837,7 +833,7 @@ start_connect_remote(EV_P_ server_t *server)
             i++;
         }
         if (listener->mptcp == 0) {
-            ERROR("[tcp] failed to enable out-of-tree multipath TCP");
+            ERROR("[redir] failed to enable out-of-tree multipath TCP");
         }
     }
 
@@ -852,7 +848,7 @@ start_connect_remote(EV_P_ server_t *server)
 #ifdef SO_MARK
     if (fwmark > 0) {
         if (setsockopt(remotefd, SOL_SOCKET, SO_MARK, &fwmark, sizeof(fwmark)) != 0) {
-            ERROR("setsockopt SO_MARK");
+            ERROR("[redir] setsockopt SO_MARK");
         }
     }
 #endif
@@ -863,7 +859,7 @@ start_connect_remote(EV_P_ server_t *server)
 
     if (fast_open) {
         if (verbose) {
-            LOGI("tcp: using TCP Fast Open for remote connection");
+            LOGI("[redir] tcp: using TCP Fast Open for remote connection");
         }
         /* save remote addr for fast open */
         remote->addr = remote_addr;
@@ -872,12 +868,12 @@ start_connect_remote(EV_P_ server_t *server)
         int r = connect(remotefd, remote_addr, get_sockaddr_len(remote_addr));
 
         if (r == -1 && errno != CONNECT_IN_PROGRESS) {
-            ERROR("[tcp] connect");
+            ERROR("[redir] tcp: connect");
             handle_tcp_fail(EV_A_ server);
             return;
         }
         if (verbose) {
-            LOGI("tcp: connect() issued for remote fd %d", remotefd);
+            LOGI("[redir] tcp: connect() issued for remote fd %d", remotefd);
         }
         /* listen to remote connected event */
         ev_io_start(EV_A_ & remote->send_ctx->io);
@@ -897,7 +893,7 @@ accept_cb(EV_P_ ev_io *w, int revents)
 
     int serverfd = accept(listener->fd, NULL, NULL);
     if (serverfd == -1) {
-        ERROR("[tcp] accept");
+        ERROR("[redir] tcp: accept");
         return;
     }
 
@@ -925,9 +921,6 @@ accept_cb(EV_P_ ev_io *w, int revents)
 
     server_t *server = new_server(serverfd);
     server->destaddr = destaddr;
-    if (verbose) {
-        LOGI("tcp: created server context for fd %d", serverfd);
-    }
 
     /* associate with listener and find first available remote */
     server->listener = listener;
@@ -941,20 +934,21 @@ accept_cb(EV_P_ ev_io *w, int revents)
         }
     }
     if (start_idx == -1) {
-        LOGE("tcp: no remote servers available for fd %d, dropping connection.", serverfd);
+        LOGE("[redir] tcp: no remote servers available for fd %d, dropping connection.", serverfd);
         close(serverfd);
         free_server(server);
         return;
     }
-
     server->remote_idx = start_idx;
 
-   if (verbose) {
-        LOGI("tcp: starting to connect remote for fd %d", serverfd);
-    }
     metrics_inc_tcp_connections();
     metrics_inc_tcp_connections_total();
     metrics_inc_remote_tcp_connections(server->remote_idx, get_addr_str(listener->remote_addr[server->remote_idx], true));
+
+    if (verbose) {
+        LOGI("[redir] tcp: starting to connect remote for fd %d", serverfd);
+    }
+
     start_connect_remote(EV_A_ server);
 }
 
@@ -965,7 +959,7 @@ signal_cb(EV_P_ ev_signal *w, int revents)
         switch (w->signum) {
         case SIGCHLD:
             if (!is_plugin_running()) {
-                LOGE("plugin service exit unexpectedly");
+                LOGE("[redir] plugin service exit unexpectedly");
                 ret_val = -1;
             } else
                 return;
@@ -1172,11 +1166,11 @@ main(int argc, char **argv)
             ipv6first = 1;
             break;
         case 'A':
-            FATAL("One time auth has been deprecated. Try AEAD ciphers instead.");
+            FATAL("[redir] One time auth has been deprecated. Try AEAD ciphers instead.");
             break;
         case '?':
             // The option character is not recognized.
-            LOGE("Unrecognized option: %s", optarg);
+            LOGE("[redir] Unrecognized option: %s", optarg);
             opterr = 1;
             break;
         }
@@ -1305,7 +1299,7 @@ main(int argc, char **argv)
     if (plugin != NULL) {
         uint16_t port = get_local_port();
         if (port == 0) {
-            FATAL("failed to find a free port");
+            FATAL("[redir] failed to find a free port");
         }
         snprintf(tmp_port, 8, "%d", port);
         if (is_ipv6only(remote_addr, remote_num, ipv6first)) {
@@ -1315,7 +1309,7 @@ main(int argc, char **argv)
         }
         plugin_port = tmp_port;
 
-        LOGI("plugin \"%s\" enabled", plugin);
+        LOGI("[redir] plugin \"%s\" enabled", plugin);
     }
 
     if (method == NULL) {
@@ -1333,7 +1327,7 @@ main(int argc, char **argv)
      */
     if (nofile > 1024) {
         if (verbose) {
-            LOGI("setting NOFILE to %d", nofile);
+            LOGI("[redir] setting NOFILE to %d", nofile);
         }
         set_nofile(nofile);
     }
@@ -1341,9 +1335,9 @@ main(int argc, char **argv)
 
     if (fast_open == 1) {
 #ifdef TCP_FASTOPEN
-        LOGI("using tcp fast open");
+        LOGI("[redir] using tcp fast open");
 #else
-        LOGE("tcp fast open is not supported by this environment");
+        LOGE("[redir] tcp fast open is not supported by this environment");
         fast_open = 0;
 #endif
     }
@@ -1354,11 +1348,11 @@ main(int argc, char **argv)
     }
 
     if (no_delay) {
-        LOGI("enable TCP no-delay");
+        LOGI("[redir] enable TCP no-delay");
     }
 
     if (ipv6first) {
-        LOGI("resolving hostname to IPv6 address first");
+        LOGI("[redir] resolving hostname to IPv6 address first");
     }
 
     if (mptcp != 0){
@@ -1366,15 +1360,15 @@ main(int argc, char **argv)
     }
 
     if (mtu > 0) {
-        LOGI("set MTU to %d", mtu);
+        LOGI("[redir] set MTU to %d", mtu);
     }
 
     if (timeout) {
-        LOGI("set timeout to %s", timeout);
+        LOGI("[redir] set timeout to %s", timeout);
     }
 
     if (fwmark > 0) {
-        LOGI("set fwmark to %d", fwmark);
+        LOGI("[redir] set fwmark to %d", fwmark);
     }
 
     if (tcp_incoming_sndbuf != 0 && tcp_incoming_sndbuf < SOCKET_BUF_SIZE) {
@@ -1382,7 +1376,7 @@ main(int argc, char **argv)
     }
 
     if (tcp_incoming_sndbuf != 0) {
-        LOGI("set TCP incoming connection send buffer size to %d", tcp_incoming_sndbuf);
+        LOGI("[redir] set TCP incoming connection send buffer size to %d", tcp_incoming_sndbuf);
     }
 
     if (tcp_incoming_rcvbuf != 0 && tcp_incoming_rcvbuf < SOCKET_BUF_SIZE) {
@@ -1390,7 +1384,7 @@ main(int argc, char **argv)
     }
 
     if (tcp_incoming_rcvbuf != 0) {
-        LOGI("set TCP incoming connection receive buffer size to %d", tcp_incoming_rcvbuf);
+        LOGI("[redir] set TCP incoming connection receive buffer size to %d", tcp_incoming_rcvbuf);
     }
 
     if (tcp_outgoing_sndbuf != 0 && tcp_outgoing_sndbuf < SOCKET_BUF_SIZE) {
@@ -1398,7 +1392,7 @@ main(int argc, char **argv)
     }
 
     if (tcp_outgoing_sndbuf != 0) {
-        LOGI("set TCP outgoing connection send buffer size to %d", tcp_outgoing_sndbuf);
+        LOGI("[redir] set TCP outgoing connection send buffer size to %d", tcp_outgoing_sndbuf);
     }
 
     if (tcp_outgoing_rcvbuf != 0 && tcp_outgoing_rcvbuf < SOCKET_BUF_SIZE) {
@@ -1406,7 +1400,7 @@ main(int argc, char **argv)
     }
 
     if (tcp_outgoing_rcvbuf != 0) {
-        LOGI("set TCP outgoing connection receive buffer size to %d", tcp_outgoing_rcvbuf);
+        LOGI("[redir] set TCP outgoing connection receive buffer size to %d", tcp_outgoing_rcvbuf);
     }
 
     if (probe_interval <= 0) {
@@ -1442,7 +1436,7 @@ main(int argc, char **argv)
         int err = start_plugin(plugin, plugin_opts, remote_str,
                                remote_port, plugin_host, plugin_port, MODE_CLIENT);
         if (err) {
-            FATAL("failed to start the plugin");
+            FATAL("[redir] failed to start the plugin");
         }
     }
 
@@ -1467,10 +1461,11 @@ main(int argc, char **argv)
         metrics_init(EV_A_ metrics_addr, metrics_port, remote_num, start_time);
     }
 
-    LOGI("initializing ciphers... %s", method);
+    LOGI("[redir] initializing ciphers... %s", method);
     crypto = crypto_init(password, key, method);
-    if (crypto == NULL)
-        FATAL("failed to initialize ciphers");
+    if (crypto == NULL) {
+        FATAL("[redir] failed to initialize ciphers");
+    }
 
     /* Setup proxy context */
     struct listen_ctx listen_ctx;
@@ -1492,7 +1487,7 @@ main(int argc, char **argv)
         struct sockaddr_storage *storage = ss_malloc(sizeof(struct sockaddr_storage));
         memset(storage, 0, sizeof(struct sockaddr_storage));
         if (get_sockaddr(host, port, storage, 1, ipv6first) == -1) {
-            FATAL("failed to resolve the provided hostname");
+            FATAL("[redir] failed to resolve the provided hostname");
         }
         listen_ctx.remote_addr[i] = (struct sockaddr *)storage;
 
@@ -1522,15 +1517,15 @@ main(int argc, char **argv)
         do {
             listen_ctx_current->local_port = local_port;
             if (listen_ctx_current->tos) {
-                LOGI("listening at %s:%s (TOS 0x%x)", local_addr, local_port, listen_ctx_current->tos);
+                LOGI("[redir] listening at %s:%s (TOS 0x%x)", local_addr, local_port, listen_ctx_current->tos);
             } else {
-                LOGI("listening at %s:%s", local_addr, local_port);
+                LOGI("[redir] listening at %s:%s", local_addr, local_port);
             }
 
             if (listen_ctx_count < MAX_LISTEN_CTX) {
                 listen_ctx_list[listen_ctx_count++] = listen_ctx_current;
             } else {
-                LOGE("too many listen ctx; increase MAX_LISTEN_CTX");
+                LOGE("[redir] too many listen ctx; increase MAX_LISTEN_CTX");
             }
 
             /* Handle additional TOS/DSCP listening ports */
@@ -1558,16 +1553,16 @@ main(int argc, char **argv)
         }
     } else {
         /* free listen_ctx if only UDP is enabled */
-        LOGI("TCP relay disabled");
+        LOGI("[redir] TCP relay disabled");
     }
 
     /* setuid */
     if (user != NULL && !run_as(user)) {
-        FATAL("failed to switch user");
+        FATAL("[redir] failed to switch user");
     }
 
     if (geteuid() == 0) {
-        LOGI("running from root user");
+        LOGI("[redir] running from root user");
     }
 
     ev_run(loop, 0);

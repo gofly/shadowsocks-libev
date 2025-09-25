@@ -438,10 +438,10 @@ remote_timeout_cb(EV_P_ ev_timer *watcher, int revents)
 
     if (remote_ctx->state == STATE_AWAITING_REPLY) {
         const char *addr_str = get_addr_str(server_ctx->remote_addr[remote_ctx->remote_idx], true);
-        LOGI("[udprelay] session timed out for remote %d (%s) waiting for reply.", remote_ctx->remote_idx, addr_str);
+        LOGI("[udp] session timed out for remote %d (%s) waiting for reply.", remote_ctx->remote_idx, addr_str);
         metrics_inc_remote_udp_session_timeouts_total(remote_ctx->remote_idx, addr_str);
     } else {
-        if (verbose) LOGI("[udp] idle session timed out.");
+        if (verbose) LOGI("[udp] idle session timed out for remote %d.", remote_ctx->remote_idx);
     }
 
     if (verbose) {

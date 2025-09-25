@@ -172,7 +172,7 @@ const cipher_kt_t *
 stream_get_cipher_type(int method)
 {
     if (method <= TABLE || method >= STREAM_CIPHER_NUM) {
-        LOGE("stream_get_cipher_type(): Illegal method");
+        LOGE("[stream] stream_get_cipher_type(): Illegal method");
         return NULL;
     }
 
@@ -187,7 +187,7 @@ stream_get_cipher_type(int method)
     const char *ciphername  = supported_stream_ciphers[method];
     const char *mbedtlsname = supported_stream_ciphers_mbedtls[method];
     if (strcmp(mbedtlsname, CIPHER_UNSUPPORTED) == 0) {
-        LOGE("Cipher %s currently is not supported by mbed TLS library",
+        LOGE("[stream] cipher %s currently is not supported by mbed TLS library",
              ciphername);
         return NULL;
     }
@@ -198,7 +198,7 @@ void
 stream_cipher_ctx_init(cipher_ctx_t *ctx, int method, int enc)
 {
     if (method <= TABLE || method >= STREAM_CIPHER_NUM) {
-        LOGE("stream_ctx_init(): Illegal method");
+        LOGE("[stream] stream_ctx_init(): Illegal method");
         return;
     }
 
@@ -214,12 +214,12 @@ stream_cipher_ctx_init(cipher_ctx_t *ctx, int method, int enc)
     cipher_evp_t *evp = ctx->evp;
 
     if (cipher == NULL) {
-        LOGE("Cipher %s not found in mbed TLS library", ciphername);
-        FATAL("Cannot initialize mbed TLS cipher");
+        LOGE("[stream] cipher %s not found in mbed TLS library", ciphername);
+        FATAL("[stream] cannot initialize mbed TLS cipher");
     }
     mbedtls_cipher_init(evp);
     if (mbedtls_cipher_setup(evp, cipher) != 0) {
-        FATAL("Cannot initialize mbed TLS cipher context");
+        FATAL("[stream] cannot initialize mbed TLS cipher context");
     }
 }
 
@@ -249,7 +249,7 @@ cipher_ctx_set_nonce(cipher_ctx_t *cipher_ctx, uint8_t *nonce, size_t nonce_len,
     cipher_t *cipher = cipher_ctx->cipher;
 
     if (nonce == NULL) {
-        LOGE("cipher_ctx_set_nonce(): NONCE is null");
+        LOGE("[stream] cipher_ctx_set_nonce(): NONCE is null");
         return;
     }
 
@@ -269,20 +269,20 @@ cipher_ctx_set_nonce(cipher_ctx_t *cipher_ctx, uint8_t *nonce, size_t nonce_len,
 
     cipher_evp_t *evp = cipher_ctx->evp;
     if (evp == NULL) {
-        LOGE("cipher_ctx_set_nonce(): Cipher context is null");
+        LOGE("[stream] cipher_ctx_set_nonce(): Cipher context is null");
         return;
     }
     if (mbedtls_cipher_setkey(evp, true_key, cipher->key_len * 8, enc) != 0) {
         mbedtls_cipher_free(evp);
-        FATAL("Cannot set mbed TLS cipher key");
+        FATAL("[stream] cannot set mbed TLS cipher key");
     }
     if (mbedtls_cipher_set_iv(evp, nonce, nonce_len) != 0) {
         mbedtls_cipher_free(evp);
-        FATAL("Cannot set mbed TLS cipher NONCE");
+        FATAL("[stream] cannot set mbed TLS cipher NONCE");
     }
     if (mbedtls_cipher_reset(evp) != 0) {
         mbedtls_cipher_free(evp);
-        FATAL("Cannot finalize mbed TLS cipher context");
+        FATAL("[stream] cannot finalize mbed TLS cipher context");
     }
 
 #ifdef SS_DEBUG
@@ -437,7 +437,7 @@ stream_decrypt_all(buffer_t *ciphertext, cipher_t *cipher, size_t capacity)
     memcpy(nonce, ciphertext->data, nonce_len);
 
     if (ppbloom_check((void *)nonce, nonce_len) == 1) {
-        LOGE("crypto: stream: repeat IV detected");
+        LOGE("[stream] crypto: stream: repeat IV detected");
         return CRYPTO_ERROR;
     }
 
@@ -522,7 +522,7 @@ stream_decrypt(buffer_t *ciphertext, cipher_ctx_t *cipher_ctx, size_t capacity)
 
         if (cipher->method >= RC4_MD5) {
             if (ppbloom_check((void *)nonce, nonce_len) == 1) {
-                LOGE("crypto: stream: repeat IV detected");
+                LOGE("[stream] crypto: stream: repeat IV detected");
                 return CRYPTO_ERROR;
             }
         }
@@ -569,7 +569,7 @@ stream_decrypt(buffer_t *ciphertext, cipher_ctx_t *cipher_ctx, size_t capacity)
     if (cipher_ctx->init == 1) {
         if (cipher->method >= RC4_MD5) {
             if (ppbloom_check((void *)cipher_ctx->nonce, cipher->nonce_len) == 1) {
-                LOGE("crypto: stream: repeat IV detected");
+                LOGE("[stream] crypto: stream: repeat IV detected");
                 return CRYPTO_ERROR;
             }
             ppbloom_add((void *)cipher_ctx->nonce, cipher->nonce_len);
@@ -600,7 +600,7 @@ cipher_t *
 stream_key_init(int method, const char *pass, const char *key)
 {
     if (method <= TABLE || method >= STREAM_CIPHER_NUM) {
-        LOGE("cipher->key_init(): Illegal method");
+        LOGE("[stream] cipher->key_init(): Illegal method");
         return NULL;
     }
 
@@ -608,8 +608,8 @@ stream_key_init(int method, const char *pass, const char *key)
     memset(cipher, 0, sizeof(cipher_t));
 
     if (method < SALSA20 && stream_get_cipher_type(method) == NULL) {
-        LOGE("Cipher %s not found in crypto library", supported_stream_ciphers[method]);
-        FATAL("Cannot initialize cipher");
+        LOGE("[stream] cipher %s not found in crypto library", supported_stream_ciphers[method]);
+        FATAL("[stream] cannot initialize cipher");
     }
 
     if (key != NULL)
@@ -620,7 +620,7 @@ stream_key_init(int method, const char *pass, const char *key)
                                             supported_stream_ciphers_key_size[method]);
 
     if (cipher->key_len == 0) {
-        FATAL("Cannot generate key and NONCE");
+        FATAL("[stream] cannot generate key and NONCE");
     }
     cipher->nonce_len = supported_stream_ciphers_nonce_size[method];
     cipher->method = method;
@@ -638,12 +638,12 @@ stream_init(const char *pass, const char *key, const char *method)
                 break;
             }
         if (m >= STREAM_CIPHER_NUM) {
-            LOGE("Invalid cipher name: %s, use chacha20-ietf instead", method);
+            LOGE("[stream] invalid cipher name: %s, use chacha20-ietf instead", method);
             m = CHACHA20IETF;
         }
     }
     if (m == TABLE) {
-        LOGE("Table is deprecated");
+        LOGE("[stream] table is deprecated");
         return NULL;
     }
     return stream_key_init(m, pass, key);

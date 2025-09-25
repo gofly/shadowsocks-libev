@@ -351,28 +351,12 @@ remote_timeout_cb(EV_P_ ev_timer *watcher, int revents)
         return;
     }
 
-    /* Only perform failover if we were actively awaiting a reply */
     if (remote_ctx->state == STATE_AWAITING_REPLY) {
-        /* Mark the timed-out remote as down */
-        if (remote_ctx->remote_idx < server_ctx->remote_num) {
-            server_ctx->remote_status[remote_ctx->remote_idx] = false;
-            LOGI("[udp] failover on no-reply: remote %d marked as offline.", remote_ctx->remote_idx);
-            const char *addr_str = get_addr_str(server_ctx->remote_addr[remote_ctx->remote_idx], true);
-            metrics_inc_remote_udp_session_timeouts_total(remote_ctx->remote_idx, addr_str);
-
-            /* Find the next available remote for this session */
-            int next_idx = -1;
-            for (int i = 0; i < server_ctx->remote_num; i++) {
-                if (server_ctx->remote_status[i]) {
-                    next_idx = i;
-                    break;
-                }
-            }
-            if (next_idx != -1) remote_ctx->remote_idx = next_idx;
-            /* If no servers are available, subsequent packets will be dropped in server_recv_cb */
-        }
+        LOGI("[udp] session timed out waiting for reply from remote %d.", remote_ctx->remote_idx);
+        const char *addr_str = get_addr_str(server_ctx->remote_addr[remote_ctx->remote_idx], true);
+        metrics_inc_remote_udp_session_timeouts_total(remote_ctx->remote_idx, addr_str);
     } else {
-        if (verbose) LOGI("[udp] idle session timed out, no failover triggered.");
+        if (verbose) LOGI("[udp] idle session timed out.");
     }
 
     if (verbose) {

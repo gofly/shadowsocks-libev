@@ -90,7 +90,7 @@ static void free_server(server_t *server);
 static void close_and_free_server(EV_P_ server_t *server);
 
 static void start_connect_remote(EV_P_ server_t *server);
-static void failover_to_next_remote(EV_P_ server_t *server);
+static void handle_tcp_fail(EV_P_ server_t *server);
 
 int verbose    = 0;
 int reuse_port = 0;
@@ -396,7 +396,7 @@ remote_timeout_cb(EV_P_ ev_timer *watcher, int revents)
      * remote socket and start connect to next remote in the listener
      * address list.
      */
-    failover_to_next_remote(EV_A_ server);
+    handle_tcp_fail(EV_A_ server);
 }
 
 static void
@@ -548,7 +548,7 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
         } else {
             ERROR("getpeername");
             // not connected
-            failover_to_next_remote(EV_A_ server);
+            handle_tcp_fail(EV_A_ server);
             return;
         }
     }
@@ -593,7 +593,7 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
                     } else {
                         ERROR("fast_open_connect");
                     }
-                    failover_to_next_remote(EV_A_ server);
+                    handle_tcp_fail(EV_A_ server);
                 }
                 return;
             }
@@ -606,7 +606,7 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
             if (errno != EAGAIN && errno != EWOULDBLOCK) {
                 ERROR("send");
                 /* close current remote and try next */
-                failover_to_next_remote(EV_A_ server);
+                handle_tcp_fail(EV_A_ server);
             }
             return;
         } else if (s < remote->buf->len) {
@@ -748,49 +748,25 @@ close_and_free_server(EV_P_ server_t *server)
 }
 
 static void
-failover_to_next_remote(EV_P_ server_t *server)
+handle_tcp_fail(EV_P_ server_t *server)
 {
     if (server->remote) {
         close_and_free_remote(EV_A_ server->remote);
         server->remote = NULL;
     }
 
-    /* Mark current remote as down */
     if (server->listener) {
-        server->listener->remote_status[server->remote_idx] = false;
-        LOGI("failover: marked remote %d as offline.", server->remote_idx);
         const char *addr_str = get_addr_str(server->listener->remote_addr[server->remote_idx], true);
         metrics_inc_remote_tcp_failures_total(server->remote_idx, addr_str);
     }
 
     /*
-     * Reset cipher context before trying the next remote.
-     * Each new connection attempt to a remote must start with a fresh cipher context,
-     * especially for AEAD ciphers, to send a new salt/IV.
+     * Do not failover to the next remote on connection failure.
+     * The probing mechanism is now solely responsible for managing remote status.
+     * We just close the server connection and let the client retry.
      */
-    crypto->ctx_init(crypto->cipher, server->e_ctx, 1);
-    crypto->ctx_init(crypto->cipher, server->d_ctx, 0);
-
-    /* find next available remote index for this server + listener */
-    int next_idx = -1;
-    if (server->listener && server->listener->remote_num > 0) {
-        for (int i = 1; i < server->listener->remote_num; i++) {
-            int check_idx = (server->remote_idx + i) % server->listener->remote_num;
-            if (server->listener->remote_status[check_idx]) {
-                next_idx = check_idx;
-                break;
-            }
-        }
-    }
-    if (next_idx == -1) {
-        LOGE("failover: no other remote servers available.");
-        close_and_free_server(EV_A_ server);
-        return;
-    }
-    server->remote_idx = next_idx;
-    LOGI("failover: server %p now trying remote_idx %d", (void *)server, server->remote_idx);
-
-    start_connect_remote(EV_A_ server);
+    LOGE("TCP connection to remote %d failed, closing connection.", server->remote_idx);
+    close_and_free_server(EV_A_ server);
 }
 
 static void
@@ -800,7 +776,7 @@ start_connect_remote(EV_P_ server_t *server)
 
     if (server->remote_idx >= listener->remote_num) {
         LOGE("all remote servers failed to connect");
-        close_and_free_server(EV_A_ server);
+        handle_tcp_fail(EV_A_ server);
         return;
     }
 
@@ -811,7 +787,7 @@ start_connect_remote(EV_P_ server_t *server)
     int remotefd = socket(remote_addr->sa_family, SOCK_STREAM, IPPROTO_TCP);
     if (remotefd == -1) {
         ERROR("[tcp] socket");
-        failover_to_next_remote(EV_A_ server);
+        handle_tcp_fail(EV_A_ server);
         return;
     }
 
@@ -887,7 +863,7 @@ start_connect_remote(EV_P_ server_t *server)
 
         if (r == -1 && errno != CONNECT_IN_PROGRESS) {
             ERROR("[tcp] connect");
-            failover_to_next_remote(EV_A_ server);
+            handle_tcp_fail(EV_A_ server);
             return;
         }
         /* listen to remote connected event */

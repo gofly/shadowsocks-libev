@@ -128,10 +128,14 @@ hash_key_fill(char *out_key, const int af, const struct sockaddr_storage *addr)
     memcpy(out_key + sizeof(int), (const uint8_t *)addr, sizeof(struct sockaddr_storage));
 }
 
-static char *
+char *
 get_addr_str(const struct sockaddr *sa, bool has_port)
 {
-    static char s[SS_ADDRSTRLEN];
+#ifdef __GNUC__
+    static __thread char s[SS_ADDRSTRLEN];
+#else
+    static _Thread_local char s[SS_ADDRSTRLEN];
+#endif
     memset(s, 0, SS_ADDRSTRLEN);
     char addr[INET6_ADDRSTRLEN] = { 0 };
     char port[PORTSTRLEN]       = { 0 };
@@ -271,7 +275,11 @@ create_server_socket(const char *host, const char *port)
         }
 
         if (rp->ai_family == AF_INET6) {
-            int ipv6only = host ? 1 : 0;
+            // When binding to a specific host, enable IPV6_V6ONLY.
+            // When binding to a wildcard address (host is NULL), disable IPV6_V6ONLY
+            // to allow the socket to accept both IPv4 and IPv6 traffic.
+            // This is the standard way to create a dual-stack server socket.
+            int ipv6only = (host != NULL);
             setsockopt(server_sock, IPPROTO_IPV6, IPV6_V6ONLY, &ipv6only, sizeof(ipv6only));
         }
 
@@ -301,22 +309,25 @@ create_server_socket(const char *host, const char *port)
 #endif
 #endif
 
-        int sol    = rp->ai_family == AF_INET ? SOL_IP : SOL_IPV6;
-        int flag_t = rp->ai_family == AF_INET ? IP_TRANSPARENT : IPV6_TRANSPARENT;
-        int flag_r = rp->ai_family == AF_INET ? IP_RECVORIGDSTADDR : IPV6_RECVORIGDSTADDR;
-
-        if (setsockopt(server_sock, sol, flag_t, &opt, sizeof(opt))) {
-            ERROR("[udp] setsockopt IP_TRANSPARENT failed");
-            close(server_sock);
-            server_sock = -1;
-            continue;
-        }
-
-        if (setsockopt(server_sock, sol, flag_r, &opt, sizeof(opt))) {
-            ERROR("[udp] setsockopt IP_RECVORIGDSTADDR failed");
-            close(server_sock);
-            server_sock = -1;
-            continue;
+        /* For a dual-stack socket, we must set options for BOTH protocols */
+        if (rp->ai_family == AF_INET6 && host == NULL) {
+            if (setsockopt(server_sock, SOL_IPV6, IPV6_TRANSPARENT, &opt, sizeof(opt)) ||
+                setsockopt(server_sock, SOL_IP, IP_TRANSPARENT, &opt, sizeof(opt))) {
+                ERROR("[udp] setsockopt IP_TRANSPARENT for dual-stack failed");
+                goto next_addr;
+            }
+            if (setsockopt(server_sock, SOL_IPV6, IPV6_RECVORIGDSTADDR, &opt, sizeof(opt)) ||
+                setsockopt(server_sock, SOL_IP, IP_RECVORIGDSTADDR, &opt, sizeof(opt))) {
+                ERROR("[udp] setsockopt IP_RECVORIGDSTADDR for dual-stack failed");
+                goto next_addr;
+            }
+        } else { /* Single-stack socket */
+            int sol = rp->ai_family == AF_INET ? SOL_IP : SOL_IPV6;
+            if (setsockopt(server_sock, sol, rp->ai_family == AF_INET ? IP_TRANSPARENT : IPV6_TRANSPARENT, &opt, sizeof(opt)) ||
+                setsockopt(server_sock, sol, rp->ai_family == AF_INET ? IP_RECVORIGDSTADDR : IPV6_RECVORIGDSTADDR, &opt, sizeof(opt))) {
+                ERROR("[udp] setsockopt for TPROXY failed");
+                goto next_addr;
+            }
         }
 
         s = bind(server_sock, rp->ai_addr, rp->ai_addrlen);
@@ -327,6 +338,7 @@ create_server_socket(const char *host, const char *port)
             ERROR("[udp] bind");
         }
 
+next_addr:
         close(server_sock);
         server_sock = -1;
     }
@@ -510,6 +522,14 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
         ERROR("[udp] remote_recv_setsockopt");
         close(reply_fd);
         goto CLEAN_UP;
+    }
+    // Allow binding to non-local IP addresses. This is essential for TPROXY
+    // to be able to send a reply with the original destination as the source.
+    if (setsockopt(reply_fd, SOL_IP, IP_FREEBIND, &opt, sizeof(opt))) {
+        ERROR("[udp] remote_recv_setsockopt IP_FREEBIND failed");
+        // This is not a fatal error on all systems, so we just log it.
+        // If bind() fails later, we will know for sure.
+        // On some systems, IP_TRANSPARENT implies IP_FREEBIND.
     }
     if (setsockopt(reply_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
         ERROR("[udp] remote_recv_setsockopt");
@@ -779,20 +799,15 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
             ERROR("[udp] server->sendto to remote failed");
             /* If send fails immediately, mark remote as down and destroy this session */
             if (server_ctx->remote_num > 1) {
-                server_ctx->remote_status[remote_ctx->remote_idx] = false;
-                LOGI("[udp] sendto failed, marking remote index %d as offline", remote_ctx->remote_idx);
-
                 /* Remove from cache to force re-creation on next packet */
                 char key_to_remove[HASH_KEY_LEN];
                 hash_key_fill(key_to_remove, remote_ctx->af, &remote_ctx->src_addr);
                 cache_remove(conn_cache, key_to_remove, HASH_KEY_LEN);
                 remote_ctx = NULL; /* Prevent timer reset below */
             }
+        } else {
+            /* send succeeded */
         }
-    } else {
-        /* send 成功时，重置 timer（在某些情况下 sendto 成功不会触发 remote 的回包计时，仍然用 watcher 来判断无响应） */
-        if (remote_ctx)
-            ev_timer_again(EV_A_ & remote_ctx->watcher);
     }
 
 CLEAN_UP:

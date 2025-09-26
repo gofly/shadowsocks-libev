@@ -73,4 +73,6 @@ typedef struct remote_ctx {
     int remote_idx;
 } remote_ctx_t;
 
+char *get_addr_str(const struct sockaddr *sa, bool has_port);
+
 #endif // _UDPRELAY_H

@@ -522,6 +522,15 @@ load16_be(const void *s)
            | ((uint16_t)in[1]);
 }
 
+void
+store16_be(uint16_t val, uint8_t *s)
+{
+    if (s != NULL) {
+        s[0] = (val >> 8) & 0xff;
+        s[1] = val & 0xff;
+    }
+}
+
 int
 get_mptcp(int enable)
 {

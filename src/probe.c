@@ -36,6 +36,8 @@
 
 #define MAX_SERVERS 32
 
+extern int verbose;
+
 /* UDP Probe */
 typedef struct udp_probe_ctx {
     ev_io io;
@@ -44,6 +46,7 @@ typedef struct udp_probe_ctx {
     server_ctx_t *server_ctx;
     crypto_t *crypto;
     ev_tstamp start_time;
+    uint16_t dns_tx_id;
 } udp_probe_ctx_t;
 
 static ev_timer udp_probe_timer;
@@ -70,7 +73,7 @@ static size_t build_dns_query(const char *domain, unsigned char *buf, size_t buf
     // ID (random), QR=0, Opcode=0, AA=0, TC=0, RD=1, RA=0, Z=0, RCODE=0
     // QDCOUNT=1, ANCOUNT=0, NSCOUNT=0, ARCOUNT=0
     unsigned char header[] = {
-        rand() % 256, rand() % 256, // Transaction ID
+        0, 0,       // Transaction ID (to be filled per-probe)
         0x01, 0x00, // Flags: 0x0100 (Standard query)
         0x00, 0x01, // Questions: 1
         0x00, 0x00, // Answer RRs: 0
@@ -134,11 +137,13 @@ static void udp_probe_recv_cb(EV_P_ ev_io *w, int revents) {
                  * 1. DNS RCODE is 0 (No Error).
                  * 2. ANCOUNT (Answer Record Count) is greater than 0.
                  */
+                const uint16_t dns_rx_id = load16_be((const uint8_t *)dns_response_ptr);
                 const bool rcode_ok = (dns_response_len >= 12) && ((dns_response_ptr[3] & 0x0F) == 0);
                 const bool has_answers = rcode_ok && (load16_be((const uint8_t *)dns_response_ptr + 6) > 0);
 
-                if (rcode_ok && has_answers) {
+                if (dns_rx_id == p_ctx->dns_tx_id && rcode_ok && has_answers) {
                     success = true;
+                    if (verbose) LOGI("[probe] successful probe to %s (latency: %.3fms)", addr_str, latency * 1000);
                 }
             }
         }
@@ -154,12 +159,13 @@ static void udp_probe_recv_cb(EV_P_ ev_io *w, int revents) {
             p_ctx->server_ctx->remote_status[p_ctx->remote_idx] = true;
             metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, true);
         }
-        metrics_set_remote_server_latency(p_ctx->remote_idx, addr_str, latency*1000);
-        
+
         /* If already up, we don't need to log anything, just update the metric */
         if (p_ctx->server_ctx->remote_status[p_ctx->remote_idx]) {
             metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, true);
         }
+
+        metrics_set_remote_server_latency(p_ctx->remote_idx, addr_str, latency*1000);
     } else {
         udp_probe_success_count[p_ctx->remote_idx] = 0;
         udp_probe_failure_count[p_ctx->remote_idx]++;
@@ -171,6 +177,8 @@ static void udp_probe_recv_cb(EV_P_ ev_io *w, int revents) {
             metrics_inc_remote_probe_failures_total(p_ctx->remote_idx, addr_str);
             metrics_set_remote_server_up(p_ctx->remote_idx, addr_str, false);
         }
+
+        metrics_set_remote_server_latency(p_ctx->remote_idx, addr_str, 0);
     }
 
     bfree(buf);
@@ -230,6 +238,11 @@ static void start_one_udp_probe(EV_P_ server_ctx_t *s_ctx, int idx) {
     memcpy(buf->data, dns_probe_packet, dns_probe_packet_len);
     buf->len = dns_probe_packet_len;
 
+    /* Generate and set a random Transaction ID for this specific probe */
+    uint16_t tx_id = rand();
+    store16_be(tx_id, (uint8_t*)buf->data);
+
+
     /* 2. Prepend the shadowsocks address header */
     brealloc(buf, buf->len + addr_header_len, MAX_UDP_PACKET_SIZE);
     memmove(buf->data + addr_header_len, buf->data, buf->len);
@@ -254,6 +267,7 @@ static void start_one_udp_probe(EV_P_ server_ctx_t *s_ctx, int idx) {
     p_ctx->remote_idx = idx;
     p_ctx->crypto = s_ctx->crypto;
     p_ctx->start_time = ev_time();
+    p_ctx->dns_tx_id = tx_id;
 
     ev_io_init(&p_ctx->io, udp_probe_recv_cb, probefd, EV_READ);
     ev_timer_init(&p_ctx->watcher, udp_probe_timeout_cb, probe_timeout_secs, 0);

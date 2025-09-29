@@ -94,6 +94,7 @@ typedef struct {
     int probe_up_count;
     int probe_down_count;
     char *probe_domain;
+    char *dot_server;
     int metrics_port;
 } jconf_t;
 

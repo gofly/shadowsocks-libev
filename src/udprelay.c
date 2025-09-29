@@ -53,6 +53,7 @@
 #include "cache.h"
 #include "udprelay.h"
 #include "probe.h"
+#include "dot.h"
 #include "metrics.h"
 #include "winsock.h"
 #define MAX_UDP_CONN_NUM 256
@@ -649,6 +650,16 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
         goto CLEAN_UP;
     }
 
+    // Check for DNS query to be routed to DoT
+    if (server_ctx->dot_server_addr != NULL) {
+        uint16_t dest_port = ntohs(((struct sockaddr_in*)&dst_addr)->sin_port);
+        if (dest_port == 53) {
+            start_dot_session(EV_A_ server_ctx, &src_addr, msgh.msg_namelen, buf);
+            goto CLEAN_UP; // DoT session will handle the rest
+        }
+    }
+
+
     if (verbose) LOGI("[udp] server receive a packet from %s", get_addr_str((struct sockaddr *)&src_addr, true));
 
     char addr_header[MAX_ADDR_HEADER_SIZE] = {0};
@@ -872,6 +883,25 @@ init_udprelay(const char *server_host, const char *server_port, int remote_num,
     server_ctx->remote_num = remote_num;
     server_ctx->remote_addr = remote_addr;
     server_ctx->remote_status = remote_status;
+    server_ctx->dot_server_addr = NULL;
+    server_ctx->dot_server_host = NULL;
+
+    if (dot_server_str != NULL && strlen(dot_server_str) > 0) {
+        char *host = strdup(dot_server_str);
+        char *port = strrchr(host, ':');
+        if (port != NULL) {
+            *port = '\0';
+            port++;
+        } else {
+            port = strdup("853");
+        }
+
+        server_ctx->dot_server_host = host;
+        server_ctx->dot_server_port = port;
+        LOGI("[udp] DNS-over-TLS (DoT) enabled, server: %s:%s", server_ctx->dot_server_host, server_ctx->dot_server_port);
+    } else {
+        free(host);
+    }
 
     ev_io_start(loop, &server_ctx->io);
 
@@ -894,6 +924,11 @@ free_udprelay()
         /* Use a temporary variable to hold the pointer for ss_free */
         void *status_ptr = (void *)server_ctx->remote_status;
         ss_free(status_ptr);
+        if (server_ctx->dot_server_addr) {
+            ss_free(server_ctx->dot_server_addr);
+            free((void*)server_ctx->dot_server_host);
+            free((void*)server_ctx->dot_server_port);
+        }
         close(server_ctx->fd);
         cache_delete(server_ctx->conn_cache, 0);
 #ifdef MODULE_LOCAL

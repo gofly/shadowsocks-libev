@@ -54,6 +54,8 @@ typedef struct server_ctx {
     int remote_num;
     struct sockaddr **remote_addr;
     int fwmark;
+    struct sockaddr_storage *dot_server_addr;
+    const char *dot_server_host;
     volatile bool *remote_status;
 } server_ctx_t;
 

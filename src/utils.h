@@ -165,26 +165,6 @@ extern int use_syslog;
     }                                                                            \
     while (0)
 
-#define LOGE(format, ...)                                                         \
-    do {                                                                          \
-        if (use_syslog) {                                                         \
-            syslog(LOG_ERR, format, ## __VA_ARGS__);                              \
-        } else {                                                                  \
-            time_t now = time(NULL);                                              \
-            char timestr[20];                                                     \
-            strftime(timestr, 20, TIME_FORMAT, localtime(&now));                  \
-            if (use_tty) {                                                        \
-                fprintf(stderr, "\e[01;35m %s ERROR: \e[0m" format "\n", timestr, \
-                        ## __VA_ARGS__);                                          \
-                fflush(stderr);                                                   \
-            } else {                                                              \
-                fprintf(stderr, " %s ERROR: " format "\n", timestr,               \
-                        ## __VA_ARGS__);                                          \
-                fflush(stderr);                                                   \
-            }                                                                     \
-        } }                                                                       \
-    while (0)
-
 #endif // if __MINGW32__
 
 #endif // if LIB_ONLY

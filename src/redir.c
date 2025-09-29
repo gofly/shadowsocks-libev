@@ -1007,6 +1007,7 @@ main(int argc, char **argv)
     int probe_up_count = 0;
     int probe_down_count = 0;
     char *probe_domain = NULL;
+    char *dot_server_str = NULL;
     char tmp_port[8];
 
     int dscp_num    = 0;
@@ -1038,6 +1039,7 @@ main(int argc, char **argv)
         { "probe-up-count", required_argument, NULL, GETOPT_VAL_PROBE_UP_COUNT },
         { "probe-down-count", required_argument, NULL, GETOPT_VAL_PROBE_DOWN_COUNT },
         { "probe-domain", required_argument, NULL, GETOPT_VAL_PROBE_DOMAIN },
+        { "dot-server",         required_argument, NULL, GETOPT_VAL_DOT_SERVER         },
         { "metrics-port", required_argument, NULL, GETOPT_VAL_METRICS_PORT },
         { "help",        no_argument,       NULL, GETOPT_VAL_HELP        },
         { NULL,          0,                 NULL, 0                      }
@@ -1088,6 +1090,9 @@ main(int argc, char **argv)
             break;
         case GETOPT_VAL_PROBE_DOMAIN:
             probe_domain = optarg;
+            break;
+        case GETOPT_VAL_DOT_SERVER:
+            dot_server_str = optarg;
             break;
         case GETOPT_VAL_METRICS_PORT:
             metrics_port = atoi(optarg);
@@ -1285,6 +1290,9 @@ main(int argc, char **argv)
         if (probe_domain == NULL) {
             probe_domain = conf->probe_domain;
         }
+        if (dot_server_str == NULL) {
+            dot_server_str = conf->dot_server;
+        }
         if (metrics_port == 0) {
             metrics_port = conf->metrics_port;
         }
@@ -1423,6 +1431,10 @@ main(int argc, char **argv)
         probe_domain = "www.google.com";
     }
 
+    if (!dot_server_str || strlen(dot_server_str) == 0) {
+        dot_server_str = "dns.google"
+    }
+    
     if (plugin != NULL) {
         int len          = 0;
         size_t buf_size  = 256 * remote_num;
@@ -1505,7 +1517,8 @@ main(int argc, char **argv)
     if (mode != TCP_ONLY) {
         init_udprelay(local_addr, local_port, listen_ctx.remote_num,
                       listen_ctx.remote_addr, mtu, crypto,
-                      listen_ctx.timeout, NULL, fwmark, listen_ctx.remote_status);
+                      listen_ctx.timeout, NULL, fwmark, listen_ctx.remote_status,
+                      dot_server_str);
     }
 
     /*

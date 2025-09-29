@@ -27,6 +27,7 @@ set(SS_REDIR_SOURCE
         udprelay.c
         probe.c
         metrics.c
+        dot.c
         cache.c
         redir.c
         ${SS_CRYPTO_SOURCE}

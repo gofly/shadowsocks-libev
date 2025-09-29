@@ -391,6 +391,8 @@ read_jconf(const char *file)
                 conf.probe_down_count = value->u.integer;
             } else if (strcmp(name, "probe_domain") == 0) {
                 conf.probe_domain = to_string(value);
+            } else if (strcmp(name, "dot_server") == 0) {
+                conf.dot_server = to_string(value);
             } else if (strcmp(name, "acl") == 0) {
                 conf.acl = to_string(value);
             } else if (strcmp(name, "metrics_port") == 0) {

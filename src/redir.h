@@ -1,24 +1,3 @@
-/* * redir.h - Define the redirector's buffers and callbacks
- *
- * Copyright (C) 2013 - 2019, Max Lv <max.c.lv@gmail.com>
- *
- * This file is part of the shadowsocks-libev.
- *
- * shadowsocks-libev is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
- * (at your option) any later version.
- *
- * shadowsocks-libev is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with shadowsocks-libev; see the file COPYING. If not, see
- * <http://www.gnu.org/licenses/>.
- */
-
 #ifndef _REDIR_H
 #define _REDIR_H
 
@@ -28,60 +7,76 @@
 #include <ev.h>
 #endif
 
+#include <stdbool.h>
+#include <stdint.h>
+#include <sys/socket.h>
+
 #include "crypto.h"
 #include "jconf.h"
 
-typedef struct listen_ctx {
-    ev_io io[2];
+typedef struct listen_ctx listen_ctx_t;
+typedef struct listen_io_ctx listen_io_ctx_t;
+typedef struct server server_t;
+typedef struct remote remote_t;
+
+struct listen_io_ctx {
+    listen_ctx_t *listener;
+    int fd;
+    int family;
+};
+
+struct listen_ctx {
+    ev_io io[MAX_LISTEN_SOCKETS];
+    int fd[MAX_LISTEN_SOCKETS];
+    int family[MAX_LISTEN_SOCKETS];
+    listen_io_ctx_t io_ctx[MAX_LISTEN_SOCKETS];
+    int fd_num;
     int remote_num;
     int timeout;
-    int fd[2];
-    int fd_num;
     int mptcp;
     int tos;
     volatile bool *remote_status;
     const char *local_port;
     struct sockaddr **remote_addr;
-} listen_ctx_t;
+};
 
 typedef struct tcp_server_ctx {
     ev_io io;
     int connected;
-    struct server *server;
+    server_t *server;
 } tcp_server_ctx_t;
 
-typedef struct server {
+struct server {
     int fd;
-
     buffer_t *buf;
-
-    cipher_ctx_t *e_ctx; // encryption context
-    cipher_ctx_t *d_ctx; // decryption context
+    cipher_ctx_t *e_ctx;
+    cipher_ctx_t *d_ctx;
     tcp_server_ctx_t *recv_ctx;
     tcp_server_ctx_t *send_ctx;
-    struct remote *remote;
-
+    remote_t *remote;
     struct sockaddr_storage destaddr;
     ev_timer delayed_connect_watcher;
     int remote_idx;
-    struct listen_ctx *listener;
-} server_t;
+    listen_ctx_t *listener;
+};
 
 typedef struct tcp_remote_ctx {
     ev_io io;
     ev_timer watcher;
     int connected;
-    struct remote *remote;
+    remote_t *remote;
 } tcp_remote_ctx_t;
 
-typedef struct remote {
+struct remote {
     int fd;
     buffer_t *buf;
     tcp_remote_ctx_t *recv_ctx;
     tcp_remote_ctx_t *send_ctx;
-    struct server *server;
+    server_t *server;
     uint32_t counter;
-    struct sockaddr *addr;
-} remote_t;
+    struct sockaddr_storage addr_storage;
 
-#endif // _REDIR_H
+};
+
+
+#endif

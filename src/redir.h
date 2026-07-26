@@ -32,10 +32,11 @@
 #include "jconf.h"
 
 typedef struct listen_ctx {
-    ev_io io;
+    ev_io io[2];
     int remote_num;
     int timeout;
-    int fd;
+    int fd[2];
+    int fd_num;
     int mptcp;
     int tos;
     volatile bool *remote_status;

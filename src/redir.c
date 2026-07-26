@@ -123,17 +123,25 @@ static listen_ctx_t *listen_ctx_list[MAX_LISTEN_CTX] = { NULL };
 static int listen_ctx_count                          = 0;
 
 static int
-getdestaddr(int fd, struct sockaddr_storage *destaddr)
+getdestaddr(int listenfd, int serverfd, struct sockaddr_storage *destaddr)
 {
     socklen_t socklen = sizeof(*destaddr);
     int error         = 0;
 
+    // Determine address family from the listening socket
+    struct sockaddr_storage listen_addr;
+    socklen_t listen_len = sizeof(listen_addr);
+    if (getsockname(listenfd, (struct sockaddr *)&listen_addr, &listen_len) != 0) {
+        return -1;
+    }
+
     if (tcp_tproxy) {
-        error = getsockname(fd, (void *)destaddr, &socklen);
+        error = getsockname(serverfd, (struct sockaddr *)destaddr, &socklen);
     } else {
-        error = getsockopt(fd, SOL_IPV6, IP6T_SO_ORIGINAL_DST, destaddr, &socklen);
-        if (error) { // Didn't find a proper way to detect IP version.
-            error = getsockopt(fd, SOL_IP, SO_ORIGINAL_DST, destaddr, &socklen);
+        if (listen_addr.ss_family == AF_INET) {
+            error = getsockopt(serverfd, SOL_IP, SO_ORIGINAL_DST, destaddr, &socklen);
+        } else {
+            error = getsockopt(serverfd, SOL_IPV6, IP6T_SO_ORIGINAL_DST, destaddr, &socklen);
         }
     }
 
@@ -144,11 +152,11 @@ getdestaddr(int fd, struct sockaddr_storage *destaddr)
 }
 
 int
-create_and_bind(const char *addr, const char *port, int af)
+create_and_bind(const char *addr, const char *port, int af, int *fds)
 {
     struct addrinfo hints;
     struct addrinfo *result, *rp;
-    int s, listen_sock = -1;
+    int s, fd_count = 0;
 
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family   = AF_UNSPEC;   /* Return IPv4 and IPv6 choices */
@@ -176,7 +184,7 @@ create_and_bind(const char *addr, const char *port, int af)
             continue;
         }
 
-        listen_sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        int listen_sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         if (listen_sock == -1) {
             continue;
         }
@@ -214,22 +222,19 @@ create_and_bind(const char *addr, const char *port, int af)
             if (listen(listen_sock, SOMAXCONN) == -1) {
                 ERROR("listen() error");
                 close(listen_sock);
-                listen_sock = -1;
                 continue;
             }
             setnonblocking(listen_sock);
-            break;
+            fds[fd_count++] = listen_sock;
         } else {
             ERROR("bind");
+            close(listen_sock);
         }
-
-        close(listen_sock);
-        listen_sock = -1;
     }
 
     freeaddrinfo(result);
 
-    return listen_sock;
+    return fd_count;
 }
 
 static void
@@ -890,14 +895,14 @@ accept_cb(EV_P_ ev_io *w, int revents)
     memset(&destaddr, 0, sizeof(struct sockaddr_storage));
 
     int err;
-
-    int serverfd = accept(listener->fd, NULL, NULL);
+    int listenfd = w->fd;
+    int serverfd = accept(listenfd, NULL, NULL);
     if (serverfd == -1) {
         ERROR("[redir] tcp: accept");
         return;
     }
 
-    err = getdestaddr(serverfd, &destaddr);
+    err = getdestaddr(listenfd, serverfd, &destaddr);
     if (err) {
         ERROR("tcp: getdestaddr");
         close(serverfd);
@@ -1541,15 +1546,18 @@ main(int argc, char **argv)
         /* Now, create sockets for all configured listeners */
         for (i = 0; i < listen_ctx_count; i++) {
             listen_ctx_t *listener = listen_ctx_list[i];
-            int listenfd = create_and_bind(local_addr, listener->local_port, AF_UNSPEC);
-            if (listenfd == -1) {
+            int fds[2];
+            int fd_count = create_and_bind(local_addr, listener->local_port, AF_UNSPEC, fds);
+            if (fd_count <= 0) {
                 FATAL("bind() error");
             }
-            listener->fd = listenfd;
-
-            ev_io_init(&listener->io, accept_cb, listenfd, EV_READ);
-            listener->io.data = listener;
-            ev_io_start(EV_A_ &listener->io);
+            listener->fd_num = fd_count;
+            for (int j = 0; j < fd_count; j++) {
+                listener->fd[j] = fds[j];
+                ev_io_init(&listener->io[j], accept_cb, fds[j], EV_READ);
+                listener->io[j].data = listener;
+                ev_io_start(EV_A_ &listener->io[j]);
+            }
         }
     } else {
         /* free listen_ctx if only UDP is enabled */

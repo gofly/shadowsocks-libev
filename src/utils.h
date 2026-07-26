@@ -219,7 +219,7 @@ void ERROR(const char *s);
 char *ss_itoa(int i);
 int ss_isnumeric(const char *s);
 int run_as(const char *user);
-void FATAL(const char *msg);
+void FATAL(const char *msg) __attribute__((noreturn));
 void usage(void);
 void daemonize(const char *path);
 int setnonblocking(int fd);

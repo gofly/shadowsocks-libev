@@ -989,7 +989,8 @@ main(int argc, char **argv)
     int mtu          = 0;
     char *user       = NULL;
     char *local_port = NULL;
-    char *local_addr = NULL;
+    char *local_addr4 = NULL;
+    char *local_addr6 = NULL;
     char *password   = NULL;
     char *key        = NULL;
     char *timeout    = NULL;
@@ -1136,7 +1137,7 @@ main(int argc, char **argv)
             conf_path = optarg;
             break;
         case 'b':
-            local_addr = optarg;
+            local_addr4 = optarg;
             break;
         case 'a':
             user = optarg;
@@ -1197,8 +1198,14 @@ main(int argc, char **argv)
         if (remote_port == NULL) {
             remote_port = conf->remote_port;
         }
-        if (local_addr == NULL) {
-            local_addr = conf->local_addr;
+        if (local_addr4 == NULL && conf->local_addr_v4 != NULL) {
+            local_addr4 = conf->local_addr_v4;
+        }
+        if (local_addr6 == NULL && conf->local_addr_v6 != NULL) {
+            local_addr6 = conf->local_addr_v6;
+        }
+        if (local_addr4 == NULL && local_addr6 == NULL && conf->local_addr != NULL) {
+            local_addr4 = conf->local_addr;
         }
         if (local_port == NULL) {
             local_port = conf->local_port;
@@ -1294,6 +1301,10 @@ main(int argc, char **argv)
         || (password == NULL && key == NULL)) {
         usage();
         exit(EXIT_FAILURE);
+    }
+
+    if (local_addr4 == NULL && local_addr6 == NULL) {
+        local_addr4 = NULL;
     }
 
     if (plugin != NULL) {
@@ -1503,7 +1514,7 @@ main(int argc, char **argv)
      * `remote_status` array that the TCP module will share.
      */
     if (mode != TCP_ONLY) {
-        init_udprelay(local_addr, local_port, listen_ctx.remote_num,
+        init_udprelay(local_addr4, local_port, listen_ctx.remote_num,
                       listen_ctx.remote_addr, mtu, crypto,
                       listen_ctx.timeout, NULL, fwmark, listen_ctx.remote_status);
     }
@@ -1511,38 +1522,73 @@ main(int argc, char **argv)
     /*
      * Now, set up TCP listeners. They will all share the same `remote_status`
      * array, which is either managed by the UDP prober or statically set to true.
+     * For each local address, we create one or more listeners (one per port/DSCP).
      */
     if (mode != UDP_ONLY) {
-        listen_ctx_t *listen_ctx_current = &listen_ctx;
-        do {
-            listen_ctx_current->local_port = local_port;
-            if (listen_ctx_current->tos) {
-                LOGI("[redir] listening at %s:%s (TOS 0x%x)", local_addr, local_port, listen_ctx_current->tos);
+        char *listen_addrs[2] = { local_addr4, local_addr6 };
+        int addr_i;
+
+        // For each local address (v4 and/or v6), create the base listener and any DSCP-derived ones
+        for (addr_i = 0; addr_i < 2; addr_i++) {
+            char *l_addr = listen_addrs[addr_i];
+            int dscp_i;
+
+            if (l_addr == NULL) {
+                continue;
+            }
+
+            // Register the base listener for this address (using local_port)
+            listen_ctx_t *base_lc;
+            if (addr_i == 0 && listen_ctx_count == 0) {
+                // First address: use the stack-allocated listen_ctx
+                base_lc = &listen_ctx;
             } else {
-                LOGI("[redir] listening at %s:%s", local_addr, local_port);
+                // Subsequent addresses: allocate a copy
+                base_lc = (listen_ctx_t *)ss_malloc(sizeof(listen_ctx_t));
+                memcpy(base_lc, &listen_ctx, sizeof(listen_ctx_t));
+            }
+
+            base_lc->local_addr = l_addr;
+            base_lc->local_port = local_port;
+
+            if (base_lc->tos) {
+                LOGI("[redir] listening at %s:%s (TOS 0x%x)", l_addr, local_port, base_lc->tos);
+            } else {
+                LOGI("[redir] listening at %s:%s", l_addr, local_port);
             }
 
             if (listen_ctx_count < MAX_LISTEN_CTX) {
-                listen_ctx_list[listen_ctx_count++] = listen_ctx_current;
+                listen_ctx_list[listen_ctx_count++] = base_lc;
             } else {
                 LOGE("[redir] too many listen ctx; increase MAX_LISTEN_CTX");
+                continue;
             }
 
-            /* Handle additional TOS/DSCP listening ports */
-            if (dscp_num > 0) {
-                listen_ctx_t *new_lc = (listen_ctx_t *)ss_malloc(sizeof(listen_ctx_t));
-                memcpy(new_lc, &listen_ctx, sizeof(listen_ctx_t));
-                local_port = dscp[dscp_num - 1].port;
-                new_lc->tos = dscp[dscp_num - 1].dscp << 2;
-                listen_ctx_current = new_lc;
+            // Handle additional TOS/DSCP listening ports
+            for (dscp_i = dscp_num - 1; dscp_i >= 0; dscp_i--) {
+                listen_ctx_t *dscp_lc = (listen_ctx_t *)ss_malloc(sizeof(listen_ctx_t));
+                memcpy(dscp_lc, &listen_ctx, sizeof(listen_ctx_t));
+                dscp_lc->local_addr = l_addr;
+                dscp_lc->local_port = dscp[dscp_i].port;
+                dscp_lc->tos = dscp[dscp_i].dscp << 2;
+
+                LOGI("[redir] listening at %s:%s (TOS 0x%x)", l_addr, dscp_lc->local_port, dscp_lc->tos);
+
+                if (listen_ctx_count < MAX_LISTEN_CTX) {
+                    listen_ctx_list[listen_ctx_count++] = dscp_lc;
+                } else {
+                    LOGE("[redir] too many listen ctx; increase MAX_LISTEN_CTX");
+                    ss_free(dscp_lc);
+                }
             }
-        } while (dscp_num-- > 0 && listen_ctx_current != NULL);
+        }
 
         /* Now, create sockets for all configured listeners */
         for (i = 0; i < listen_ctx_count; i++) {
             listen_ctx_t *listener = listen_ctx_list[i];
-            int listenfd = create_and_bind(local_addr, listener->local_port, AF_UNSPEC);
+            int listenfd = create_and_bind(listener->local_addr, listener->local_port, AF_UNSPEC);
             if (listenfd == -1) {
+                LOGE("[redir] bind() error for %s:%s", listener->local_addr, listener->local_port);
                 FATAL("bind() error");
             }
             listener->fd = listenfd;
@@ -1577,7 +1623,7 @@ main(int argc, char **argv)
     
     ss_free(listen_ctx.remote_addr);
 
-    /* Free dynamically allocated listen contexts for DSCP */
+    /* Free dynamically allocated listen contexts (DSCP copies and multi-addr copies) */
     for (i = 0; i < listen_ctx_count; i++) {
         if (listen_ctx_list[i] != &listen_ctx) {
             ss_free(listen_ctx_list[i]);

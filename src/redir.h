@@ -39,6 +39,7 @@ typedef struct listen_ctx {
     int mptcp;
     int tos;
     volatile bool *remote_status;
+    const char *local_addr;
     const char *local_port;
     struct sockaddr **remote_addr;
 } listen_ctx_t;

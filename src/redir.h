@@ -105,9 +105,6 @@ struct server {
     struct sockaddr_storage destaddr;
 
 
-    ev_timer delayed_connect_watcher;
-
-
     int remote_idx;
 
 
@@ -140,15 +137,22 @@ typedef struct tcp_remote_ctx {
 } tcp_remote_ctx_t;
 
 
+typedef struct remote remote_t;
 
 struct remote {
     int fd;
     struct sockaddr *addr;
+
     tcp_remote_ctx_t *recv_ctx;
     tcp_remote_ctx_t *send_ctx;
 
     buffer_t *buf;
     server_t *server;
+
+    struct sockaddr_storage addr_storage;
+    socklen_t addr_len;
+
+    int fastopen_sent;
 
     volatile int closing;
 };

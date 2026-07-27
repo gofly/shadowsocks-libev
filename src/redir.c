@@ -935,10 +935,6 @@ close_and_free_server(EV_P_ server_t *server)
             &server->send_ctx->io);
     }
 
-    ev_timer_stop(
-        EV_A_
-        &server->delayed_connect_watcher);
-
     if (server->fd >= 0) {
 
         close(server->fd);
@@ -973,9 +969,6 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
         close_and_free_server(EV_A_ server);
         return;
     }
-
-    ev_timer_stop(EV_A_
-                  &server->delayed_connect_watcher);
 
     if (remote->buf == NULL) {
         close_and_free_remote(EV_A_ remote);
@@ -1353,141 +1346,146 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
 static void
 remote_send_cb(EV_P_ ev_io *w, int revents)
 {
-    tcp_remote_ctx_t *remote_send_ctx =
+
+    tcp_remote_ctx_t *ctx =
         (tcp_remote_ctx_t *)w;
 
-
     remote_t *remote =
-        remote_send_ctx->remote;
-
+        ctx->remote;
 
     if (remote == NULL)
         return;
 
-
     server_t *server =
         remote->server;
-
 
     if (server == NULL)
         return;
 
-
-
     ev_timer_stop(EV_A_
-                  &remote_send_ctx->watcher);
-
-
+                  &ctx->watcher);
 
     /*
-     * TCP Fast Open
+     * First event:
+     *
+     * TFO send
      */
-    if (remote->addr != NULL) {
 
+    if (fast_open &&
+        !remote->fastopen_sent) {
 
-        int s = -1;
+        /*
+         * Build SS header
+         */
 
+        buffer_t abuf;
 
-#if defined(MSG_FASTOPEN)
+        memset(&abuf,
+               0,
+               sizeof(abuf));
 
+        balloc(&abuf,
+               SOCKET_BUF_SIZE);
 
-        s = sendto(
-                remote->fd,
-                remote->buf->data +
-                remote->buf->idx,
-                remote->buf->len,
-                MSG_FASTOPEN,
-                remote->addr,
-                get_sockaddr_len(remote->addr));
+        int hlen =
+            construct_relay_header(
+                &server->destaddr,
+                abuf.data);
 
+        if (hlen <= 0) {
 
-#elif defined(TCP_FASTOPEN_CONNECT)
+            bfree(&abuf);
 
-
-        int opt = 1;
-
-
-        setsockopt(remote->fd,
-                   IPPROTO_TCP,
-                   TCP_FASTOPEN_CONNECT,
-                   &opt,
-                   sizeof(opt));
-
-
-        s = connect(
-                remote->fd,
-                remote->addr,
-                get_sockaddr_len(remote->addr));
-
-
-        if (s == 0) {
-
-            s = send(
-                remote->fd,
-                remote->buf->data,
-                remote->buf->len,
-                0);
-        }
-
-
-#else
-
-        FATAL("[redir] TFO unsupported");
-
-#endif
-
-
-        remote->addr = NULL;
-
-
-        if (s < 0) {
-
-
-            if (errno == CONNECT_IN_PROGRESS ||
-                errno == EINPROGRESS) {
-
-
-                ev_io_start(
-                    EV_A_
-                    &remote_send_ctx->io);
-
-
-                ev_timer_start(
-                    EV_A_
-                    &remote_send_ctx->watcher);
-
-
-                return;
-            }
-
-
-            ERROR("[redir] fast open send");
-
-
-            handle_tcp_fail(
-                EV_A_
-                server);
-
+            handle_tcp_fail(EV_A_
+                            server);
 
             return;
         }
 
+        abuf.len =
+            hlen;
+
+        bprepend(remote->buf,
+                 &abuf,
+                 SOCKET_BUF_SIZE);
+
+        bfree(&abuf);
+
+        int err =
+            crypto->encrypt(remote->buf,
+                            server->e_ctx,
+                            SOCKET_BUF_SIZE);
+
+        if (err) {
+
+            ERROR("[redir] encrypt");
+
+            handle_tcp_fail(EV_A_
+                            server);
+
+            return;
+        }
+
+#ifdef MSG_FASTOPEN
+
+        ssize_t s =
+            sendto(remote->fd,
+                   remote->buf->data +
+                   remote->buf->idx,
+                   remote->buf->len,
+                   MSG_FASTOPEN,
+                   (struct sockaddr *)
+                   &remote->addr_storage,
+                   remote->addr_len);
+
+        if (s < 0) {
+
+            if(errno == EINPROGRESS ||
+               errno == EAGAIN) {
+
+                ev_io_start(EV_A_
+                            &ctx->io);
+
+                return;
+            }
+
+            ERROR("[redir] MSG_FASTOPEN");
+
+            handle_tcp_fail(EV_A_
+                            server);
+
+            return;
+        }
+
+        remote->fastopen_sent = 1;
+
+        remote->buf->idx += s;
+
+        remote->buf->len -= s;
+
+#else
+
+        ERROR("[redir] TFO unsupported");
+
+        handle_tcp_fail(EV_A_
+                        server);
+
+        return;
+
+#endif
 
     }
 
-
     /*
-     * Normal connection completion
+     * Check connection
      */
-    if (!remote_send_ctx->connected) {
 
+    if (!ctx->connected) {
 
         int error = 0;
 
         socklen_t len =
             sizeof(error);
-
-
 
         if (getsockopt(remote->fd,
                        SOL_SOCKET,
@@ -1495,210 +1493,86 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
                        &error,
                        &len) < 0) {
 
-
             ERROR("[redir] SO_ERROR");
 
-
-            handle_tcp_fail(
-                EV_A_
-                server);
-
+            handle_tcp_fail(EV_A_
+                            server);
 
             return;
         }
 
-
-        if (error != 0) {
-
+        if(error != 0) {
 
             errno = error;
 
-
             ERROR("[redir] connect failed");
 
-
-            handle_tcp_fail(
-                EV_A_
-                server);
-
+            handle_tcp_fail(EV_A_
+                            server);
 
             return;
         }
 
+        ctx->connected = 1;
 
-        remote_send_ctx->connected = 1;
+        ev_io_stop(EV_A_
+                   &ctx->io);
 
+        ev_io_start(EV_A_
+                    &remote->recv_ctx->io);
 
-        /*
-         * Construct SS destination header.
-         */
-        buffer_t abuf;
+    }
 
+    /*
+     * Send remaining data
+     */
 
-        memset(&abuf,
-               0,
-               sizeof(abuf));
+    if(remote->buf->len > 0) {
 
+        ssize_t s =
+            send(remote->fd,
+                 remote->buf->data +
+                 remote->buf->idx,
+                 remote->buf->len,
+                 0);
 
-        balloc(&abuf,
-               SOCKET_BUF_SIZE);
+        if(s < 0) {
 
+            if(errno == EAGAIN ||
+               errno == EWOULDBLOCK)
+                return;
 
+            ERROR("[redir] remote send");
 
-        int addr_len =
-            construct_relay_header(
-                &server->destaddr,
-                abuf.data);
-
-
-
-        if (addr_len <= 0) {
-
-
-            bfree(&abuf);
-
-
-            handle_tcp_fail(
-                EV_A_
-                server);
-
+            handle_tcp_fail(EV_A_
+                            server);
 
             return;
         }
-
-
-
-        abuf.len =
-            addr_len;
-
-
-
-        bprepend(
-            remote->buf,
-            &abuf,
-            SOCKET_BUF_SIZE);
-
-
-        bfree(&abuf);
-
-
-
-        int err =
-            crypto->encrypt(
-                remote->buf,
-                server->e_ctx,
-                SOCKET_BUF_SIZE);
-
-
-
-        if (err) {
-
-
-            ERROR("[redir] encrypt failed");
-
-
-            handle_tcp_fail(
-                EV_A_
-                server);
-
-
-            return;
-        }
-
-
-        ev_io_stop(
-            EV_A_
-            &remote_send_ctx->io);
-
-
-        ev_io_start(
-            EV_A_
-            &remote->recv_ctx->io);
-
-    }
-
-
-
-    if (remote->buf->len == 0) {
-
-
-        ev_io_stop(
-            EV_A_
-            &remote_send_ctx->io);
-
-
-        ev_io_start(
-            EV_A_
-            &server->recv_ctx->io);
-
-
-        return;
-    }
-
-
-
-    ssize_t s =
-        send(remote->fd,
-             remote->buf->data +
-             remote->buf->idx,
-             remote->buf->len,
-             0);
-
-
-
-    if (s < 0) {
-
-
-        if(errno == EAGAIN ||
-           errno == EWOULDBLOCK)
-            return;
-
-
-        ERROR("[redir] remote send");
-
-
-        handle_tcp_fail(
-            EV_A_
-            server);
-
-
-        return;
-    }
-
-
-
-    if (s < remote->buf->len) {
-
-
-        remote->buf->len -= s;
 
         remote->buf->idx += s;
 
+        remote->buf->len -= s;
 
-        ev_io_start(
-            EV_A_
-            &remote_send_ctx->io);
+        if(remote->buf->len > 0) {
 
+            ev_io_start(EV_A_
+                        &ctx->io);
 
-        return;
+            return;
+        }
+
     }
-
-
-
-    remote->buf->len = 0;
 
     remote->buf->idx = 0;
 
+    remote->buf->len = 0;
 
+    ev_io_stop(EV_A_
+               &ctx->io);
 
-    ev_io_stop(
-        EV_A_
-        &remote_send_ctx->io);
-
-
-    ev_io_start(
-        EV_A_
-        &server->recv_ctx->io);
+    ev_io_start(EV_A_
+                &server->recv_ctx->io);
 }
 
 static void
@@ -1740,7 +1614,7 @@ start_connect_remote(EV_P_ server_t *server)
     if (server == NULL ||
         server->listener == NULL) {
 
-        ERROR("[redir] invalid server context");
+        ERROR("[redir] invalid server");
 
         return;
     }
@@ -1751,7 +1625,7 @@ start_connect_remote(EV_P_ server_t *server)
     if (server->remote_idx >=
         listener->remote_num) {
 
-        LOGE("[redir] no remote available");
+        ERROR("[redir] invalid remote index");
 
         handle_tcp_fail(EV_A_
                         server);
@@ -1764,7 +1638,7 @@ start_connect_remote(EV_P_ server_t *server)
 
     if (addr == NULL) {
 
-        ERROR("[redir] remote address NULL");
+        ERROR("[redir] remote addr NULL");
 
         handle_tcp_fail(EV_A_
                         server);
@@ -1777,7 +1651,7 @@ start_connect_remote(EV_P_ server_t *server)
 
     if (addr_len == 0) {
 
-        ERROR("[redir] invalid remote address");
+        ERROR("[redir] invalid addr len");
 
         handle_tcp_fail(EV_A_
                         server);
@@ -1785,15 +1659,12 @@ start_connect_remote(EV_P_ server_t *server)
         return;
     }
 
-    int protocol =
-        IPPROTO_TCP;
+    int protocol = IPPROTO_TCP;
 
 #ifdef IPPROTO_MPTCP
 
-    if (listener->mptcp < 0) {
-
+    if (listener->mptcp < 0)
         protocol = IPPROTO_MPTCP;
-    }
 
 #endif
 
@@ -1804,8 +1675,6 @@ start_connect_remote(EV_P_ server_t *server)
 
     if (fd < 0 &&
         protocol == IPPROTO_MPTCP) {
-
-        LOGI("[redir] MPTCP unavailable, fallback TCP");
 
         fd =
             socket(addr->sa_family,
@@ -1841,23 +1710,18 @@ start_connect_remote(EV_P_ server_t *server)
 
 #endif
 
-    if (tcp_outgoing_sndbuf > 0) {
+#ifdef TCP_FASTOPEN_CONNECT
+
+    if (fast_open) {
 
         setsockopt(fd,
-                   SOL_SOCKET,
-                   SO_SNDBUF,
-                   &tcp_outgoing_sndbuf,
-                   sizeof(int));
+                   IPPROTO_TCP,
+                   TCP_FASTOPEN_CONNECT,
+                   &opt,
+                   sizeof(opt));
     }
 
-    if (tcp_outgoing_rcvbuf > 0) {
-
-        setsockopt(fd,
-                   SOL_SOCKET,
-                   SO_RCVBUF,
-                   &tcp_outgoing_rcvbuf,
-                   sizeof(int));
-    }
+#endif
 
     setnonblocking(fd);
 
@@ -1869,11 +1733,6 @@ start_connect_remote(EV_P_ server_t *server)
 
         close(fd);
 
-        ERROR("[redir] new_remote failed");
-
-        handle_tcp_fail(EV_A_
-                        server);
-
         return;
     }
 
@@ -1882,38 +1741,65 @@ start_connect_remote(EV_P_ server_t *server)
     remote->server = server;
 
     /*
-    * Keep remote address for TFO.
-    */
-    remote->addr = addr;
+     * Save remote address
+     */
 
-    int r =
-    connect(fd,
-            addr,
-            addr_len);
+    memset(&remote->addr_storage,
+           0,
+           sizeof(remote->addr_storage));
 
+    memcpy(&remote->addr_storage,
+           addr,
+           addr_len);
 
-    if (r < 0 &&
-        errno != CONNECT_IN_PROGRESS) {
+    remote->addr_len =
+        addr_len;
 
-        ERROR("[redir] connect");
+    remote->fastopen_sent = 0;
 
-        close_and_free_remote(EV_A_
-                            remote);
+    /*
+     * TFO:
+     *
+     * DO NOT connect()
+     *
+     * sendto(MSG_FASTOPEN)
+     * happens in remote_send_cb()
+     */
 
-        close_and_free_server(EV_A_
-                            server);
+    if (!fast_open) {
 
-        return;
+        int r =
+            connect(fd,
+                    (struct sockaddr *)
+                    &remote->addr_storage,
+                    remote->addr_len);
+
+        if (r < 0 &&
+            errno != EINPROGRESS) {
+
+            ERROR("[redir] connect");
+
+            close_and_free_remote(
+                EV_A_
+                remote);
+
+            close_and_free_server(
+                EV_A_
+                server);
+
+            return;
+        }
+
     }
 
     ev_io_start(EV_A_
                 &remote->send_ctx->io);
 
     ev_timer_start(EV_A_
-                &remote->send_ctx->watcher);
+                   &remote->send_ctx->watcher);
 
     ev_io_start(EV_A_
-            &server->recv_ctx->io);
+                &server->recv_ctx->io);
 }
 
 static void

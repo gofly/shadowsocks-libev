@@ -141,16 +141,15 @@ typedef struct remote remote_t;
 
 struct remote {
     int fd;
-    struct sockaddr *addr;
+
+    struct sockaddr_storage addr_storage;
+    socklen_t addr_len;
 
     tcp_remote_ctx_t *recv_ctx;
     tcp_remote_ctx_t *send_ctx;
 
     buffer_t *buf;
     server_t *server;
-
-    struct sockaddr_storage addr_storage;
-    socklen_t addr_len;
 
     int fastopen_sent;
 

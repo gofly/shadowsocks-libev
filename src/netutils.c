@@ -125,7 +125,7 @@ bind_to_addr(struct sockaddr_storage *storage,
 }
 
 int
-construct_udprelay_header(const struct sockaddr_storage *in_addr,
+construct_relay_header(const struct sockaddr_storage *in_addr,
                           char *addr_header)
 {
     int addr_header_len = 0;

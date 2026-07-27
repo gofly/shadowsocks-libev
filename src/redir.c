@@ -543,6 +543,12 @@ accept_cb(EV_P_ ev_io *w, int revents)
                 server->remote_idx],
             true));
 
+    if (verbose) {
+        LOGI("[redir] tcp: starting remote "
+             "connect for fd %d",
+             serverfd);
+    }
+
     start_connect_remote(EV_A_
                          server);
 }
@@ -956,6 +962,7 @@ close_and_free_server(EV_P_ server_t *server)
 
     free_server(server);
 }
+
 static void
 server_recv_cb(EV_P_ ev_io *w, int revents)
 {
@@ -1017,6 +1024,24 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
     remote->buf->len += r;
 
     metrics_inc_tcp_rx_bytes(r);
+
+    if (verbose) {
+        uint16_t port = 0;
+        char ipstr[INET6_ADDRSTRLEN];
+        memset(&ipstr, 0, INET6_ADDRSTRLEN);
+
+        if (AF_INET == server->destaddr.ss_family) {
+            struct sockaddr_in *sa = (struct sockaddr_in *)&(server->destaddr);
+            inet_ntop(AF_INET, &(sa->sin_addr), ipstr, INET_ADDRSTRLEN);
+            port = ntohs(sa->sin_port);
+        } else {
+            struct sockaddr_in6 *sa = (struct sockaddr_in6 *)&(server->destaddr);
+            inet_ntop(AF_INET6, &(sa->sin6_addr), ipstr, INET6_ADDRSTRLEN);
+            port = ntohs(sa->sin6_port);
+        }
+
+        LOGI("[redir] redir to %s:%d, len=%zu, recv=%zd", ipstr, port, remote->buf->len, r);
+    }
 
     if (!remote->send_ctx->connected) {
 
@@ -1353,14 +1378,14 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
         return;
 
     /*
-     * Stop timeout timer.
-     *
-     * If this callback is called because the socket became
-     * writable, the connection attempt finished.
+     * Stop connect timeout timer.
      */
     ev_timer_stop(EV_A_
                   &remote_send_ctx->watcher);
 
+    /*
+     * Check TCP connect result.
+     */
     if (!remote_send_ctx->connected) {
 
         int error = 0;
@@ -1368,15 +1393,6 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
         socklen_t len =
             sizeof(error);
 
-        /*
-         * Check connect() result.
-         *
-         * Do NOT use getpeername().
-         *
-         * getpeername() may return success on some IPv6
-         * transparent proxy situations even when connect
-         * failed.
-         */
         if (getsockopt(remote->fd,
                        SOL_SOCKET,
                        SO_ERROR,
@@ -1409,10 +1425,9 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
                    &remote_send_ctx->io);
 
         /*
-         * Stop receiving local data temporarily.
+         * Stop reading local data temporarily.
          *
-         * We must send the Shadowsocks destination header
-         * before forwarding payload.
+         * Need to send Shadowsocks address header first.
          */
         ev_io_stop(EV_A_
                    &server->recv_ctx->io);
@@ -1421,31 +1436,31 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
                     &remote->recv_ctx->io);
 
         /*
-         * Build SOCKS-like address header:
+         * Construct destination address header.
          *
-         * [DST.ADDR]
-         * [DST.PORT]
+         * Format:
+         *
+         * ATYP + DST.ADDR + DST.PORT
          *
          */
-        buffer_t addr_buf;
+        buffer_t ss_addr_to_send;
 
-        memset(&addr_buf,
-               0,
-               sizeof(addr_buf));
+        buffer_t *abuf =
+            &ss_addr_to_send;
 
-        balloc(&addr_buf,
+        balloc(abuf,
                SOCKET_BUF_SIZE);
 
         int addr_len =
-            construct_udprelay_header(
+            construct_relay_header(
                 &server->destaddr,
-                addr_buf.data);
+                abuf->data);
 
         if (addr_len <= 0) {
 
-            LOGE("[redir] failed to construct destination header");
+            LOGE("[redir] failed to construct address header");
 
-            bfree(&addr_buf);
+            bfree(abuf);
 
             close_and_free_remote(EV_A_
                                   remote);
@@ -1456,30 +1471,45 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
             return;
         }
 
-        addr_buf.len = addr_len;
+        abuf->len =
+            addr_len;
 
         /*
-         * Prepend destination address before payload.
-         */
-        bprepend(remote->buf,
-                 &addr_buf,
-                 SOCKET_BUF_SIZE);
-
-        bfree(&addr_buf);
-
-        /*
-         * Encrypt:
-         *
-         * [destination][payload]
+         * Encrypt address header first.
          */
         int err =
+            crypto->encrypt(abuf,
+                            server->e_ctx,
+                            SOCKET_BUF_SIZE);
+
+        if (err) {
+
+            LOGE("[redir] invalid password or cipher");
+
+            bfree(abuf);
+
+            close_and_free_remote(EV_A_
+                                  remote);
+
+            close_and_free_server(EV_A_
+                                  server);
+
+            return;
+        }
+
+        /*
+         * Encrypt payload.
+         */
+        err =
             crypto->encrypt(remote->buf,
                             server->e_ctx,
                             SOCKET_BUF_SIZE);
 
         if (err) {
 
-            LOGE("[redir] encrypt failed");
+            LOGE("[redir] invalid password or cipher");
+
+            bfree(abuf);
 
             close_and_free_remote(EV_A_
                                   remote);
@@ -1490,8 +1520,25 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
             return;
         }
 
+        /*
+         * Combine:
+         *
+         * encrypted address
+         * +
+         * encrypted payload
+         *
+         */
+        bprepend(remote->buf,
+                 abuf,
+                 SOCKET_BUF_SIZE);
+
+        bfree(abuf);
+
     }
 
+    /*
+     * No data to send.
+     */
     if (remote->buf == NULL ||
         remote->buf->len == 0) {
 
@@ -1527,6 +1574,9 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
         return;
     }
 
+    /*
+     * Partial send.
+     */
     if (s < remote->buf->len) {
 
         remote->buf->len -= s;
@@ -1540,9 +1590,10 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
     }
 
     /*
-     * All encrypted data sent.
+     * All data sent.
      */
     remote->buf->len = 0;
+
     remote->buf->idx = 0;
 
     ev_io_stop(EV_A_
@@ -1550,7 +1601,6 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
 
     ev_io_start(EV_A_
                 &server->recv_ctx->io);
-
 }
 
 static void
@@ -1871,6 +1921,7 @@ handle_tcp_fail(EV_P_ server_t *server)
     close_and_free_server(EV_A_
                           server);
 }
+
 static void
 signal_cb(EV_P_ ev_signal *w, int revents)
 {
@@ -2384,7 +2435,6 @@ main(int argc, char **argv)
             FATAL("[redir] failed to start the plugin");
         }
     }
-
 
     /* ignore SIGPIPE */
     signal(SIGPIPE, SIG_IGN);

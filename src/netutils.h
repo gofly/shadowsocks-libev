@@ -88,7 +88,7 @@ ssize_t get_sockaddr(char *host, char *port,
                      struct sockaddr_storage *storage, int block,
                      int ipv6first);
 int set_reuseport(int socket);
-int construct_udprelay_header(const struct sockaddr_storage *in_addr,
+int construct_relay_header(const struct sockaddr_storage *in_addr,
                               char *addr_header);
 int parse_udprelay_header(const char *buf, const size_t buf_len,
                           char *host, char *port, struct sockaddr_storage *storage);

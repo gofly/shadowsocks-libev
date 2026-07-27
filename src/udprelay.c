@@ -652,7 +652,7 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
     if (verbose) LOGI("[udp] server receive a packet from %s", get_addr_str((struct sockaddr *)&src_addr, true));
 
     char addr_header[MAX_ADDR_HEADER_SIZE] = {0};
-    int addr_header_len = construct_udprelay_header(&dst_addr, addr_header);
+    int addr_header_len = construct_relay_header(&dst_addr, addr_header);
     if (addr_header_len == 0) {
         LOGE("[udp] failed to construct addr header (tproxy)");
         goto CLEAN_UP;

@@ -223,7 +223,7 @@ static void start_one_udp_probe(EV_P_ server_ctx_t *s_ctx, int idx) {
         return;
     }
     char addr_header[MAX_ADDR_HEADER_SIZE] = {0};
-    int addr_header_len = construct_udprelay_header(&dns_server_addr, addr_header);
+    int addr_header_len = construct_relay_header(&dns_server_addr, addr_header);
 
     buffer_t *buf = ss_malloc(sizeof(buffer_t));
     balloc(buf, MAX_UDP_PACKET_SIZE);

@@ -142,31 +142,15 @@ typedef struct tcp_remote_ctx {
 
 
 struct remote {
-
-
     int fd;
-
-
-    buffer_t *buf;
-
-
+    struct sockaddr *addr;
     tcp_remote_ctx_t *recv_ctx;
-
-
     tcp_remote_ctx_t *send_ctx;
 
-
+    buffer_t *buf;
     server_t *server;
 
-
-    uint32_t counter;
-
-
-    struct sockaddr_storage addr_storage;
-
-
     volatile int closing;
-
 };
 
 

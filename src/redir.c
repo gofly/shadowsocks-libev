@@ -559,17 +559,11 @@ static void server_recv_cb(EV_P_ ev_io *w, int revents)
     tcp_server_ctx_t *server_recv_ctx = (tcp_server_ctx_t *)w;
     server_t *server = server_recv_ctx->server;
     if (server == NULL || server->remote == NULL) return;
-
     remote_t *remote = server->remote;
 
-    if (remote == NULL) {
-        close_and_free_server(EV_A_ server);
-        return;
-    }
-
-    if (remote->buf == NULL) {
-        close_and_free_remote(EV_A_ remote);
-        close_and_free_server(EV_A_ server);
+    // 如果 remote 缓冲区满了，先不读
+    if (remote->buf->len >= SOCKET_BUF_SIZE) {
+        ev_io_stop(EV_A_ &server_recv_ctx->io);
         return;
     }
 
@@ -584,32 +578,15 @@ static void server_recv_cb(EV_P_ ev_io *w, int revents)
     remote->buf->len += r;
     metrics_inc_tcp_rx_bytes(r);
 
-    if (verbose) {
-        uint16_t port = 0;
-        char ipstr[INET6_ADDRSTRLEN];
-        memset(&ipstr, 0, INET6_ADDRSTRLEN);
-
-        if (AF_INET == server->destaddr.ss_family) {
-            struct sockaddr_in *sa = (struct sockaddr_in *)&(server->destaddr);
-            inet_ntop(AF_INET, &(sa->sin_addr), ipstr, INET_ADDRSTRLEN);
-            port = ntohs(sa->sin_port);
-        } else {
-            struct sockaddr_in6 *sa = (struct sockaddr_in6 *)&(server->destaddr);
-            inet_ntop(AF_INET6, &(sa->sin6_addr), ipstr, INET6_ADDRSTRLEN);
-            port = ntohs(sa->sin6_port);
-        }
-
-        LOGI("[redir] redir to %s:%d, len=%zu, recv=%zd", ipstr, port, remote->buf->len, r);
-    }
-
-    // 如果远端连接尚未建立或 Header 还没发，先不在此处加密，交给 remote_send_cb 统一拼接 Header 后加密
+    // 【关键点 1】：如果远端尚未连接成功，或者 Fast Open Header 还没发
+    // 必须【停止客户端读】，等待 remote_send_cb 建立连接并把 [Header + 首包 TLS] 加密发出去！
     if (!remote->send_ctx->connected || !remote->fastopen_sent) {
-        ev_io_stop(EV_A_ &server_recv_ctx->io);
+        ev_io_stop(EV_A_ &server_recv_ctx->io); // <--- 必须暂停读！防止 TLS 首包数据被打碎交错
         ev_io_start(EV_A_ &remote->send_ctx->io);
         return;
     }
 
-    // 只有在 Header 已经发送过的后续数据流，才直接在此处加密送出
+    // 【关键点 2】：连接已建立，正常流式加密发送
     int err = crypto->encrypt(remote->buf, server->e_ctx, SOCKET_BUF_SIZE);
     if (err) {
         LOGE("[redir] encryption failed");
@@ -619,7 +596,6 @@ static void server_recv_cb(EV_P_ ev_io *w, int revents)
     }
 
     ssize_t s = send(remote->fd, remote->buf->data + remote->buf->idx, remote->buf->len, 0);
-
     if (s < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             remote->buf->idx = 0;
@@ -627,8 +603,6 @@ static void server_recv_cb(EV_P_ ev_io *w, int revents)
             ev_io_start(EV_A_ &remote->send_ctx->io);
             return;
         }
-
-        ERROR("[redir] remote send");
         close_and_free_remote(EV_A_ remote);
         close_and_free_server(EV_A_ server);
         return;
@@ -642,6 +616,7 @@ static void server_recv_cb(EV_P_ ev_io *w, int revents)
         return;
     }
 
+    // 全部发送完毕，清空 buffer，继续监听读
     remote->buf->len = 0;
     remote->buf->idx = 0;
 }
@@ -650,32 +625,26 @@ static void server_send_cb(EV_P_ ev_io *w, int revents)
 {
     tcp_server_ctx_t *server_send_ctx = (tcp_server_ctx_t *)w;
     server_t *server = server_send_ctx->server;
-
     if (server == NULL) return;
 
     remote_t *remote = server->remote;
-
     if (remote == NULL) {
         close_and_free_server(EV_A_ server);
         return;
     }
 
     if (server->buf == NULL || server->buf->len == 0) {
+        server->buf->len = 0;
+        server->buf->idx = 0; // 【关键】确保清零
         ev_io_stop(EV_A_ &server_send_ctx->io);
-        if (remote->recv_ctx != NULL && !ev_is_active(&remote->recv_ctx->io)) {
-            ev_io_start(EV_A_ &remote->recv_ctx->io);
-        }
+        if (remote->recv_ctx != NULL) ev_io_start(EV_A_ &remote->recv_ctx->io);
         return;
     }
 
     ssize_t s = send(server->fd, server->buf->data + server->buf->idx, server->buf->len, 0);
 
     if (s < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return;
-        }
-
-        ERROR("[redir] server send");
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return;
         close_and_free_remote(EV_A_ remote);
         close_and_free_server(EV_A_ server);
         return;
@@ -687,12 +656,13 @@ static void server_send_cb(EV_P_ ev_io *w, int revents)
         return;
     }
 
+    // 全部发送完毕，必须同时清空 len 和 idx！
     server->buf->len = 0;
     server->buf->idx = 0;
 
+    // 停止客户端写，恢复远端读
     ev_io_stop(EV_A_ &server_send_ctx->io);
-
-    if (remote->recv_ctx != NULL && !ev_is_active(&remote->recv_ctx->io)) {
+    if (remote->recv_ctx != NULL) {
         ev_io_start(EV_A_ &remote->recv_ctx->io);
     }
 }
@@ -701,17 +671,21 @@ static void remote_recv_cb(EV_P_ ev_io *w, int revents)
 {
     tcp_remote_ctx_t *ctx = (tcp_remote_ctx_t *)w;
     remote_t *remote = ctx->remote;
-
     if (remote == NULL) return;
 
     server_t *server = remote->server;
     if (server == NULL) return;
 
+    // 【致命点修复】只要 buffer 里没有待发送的数据，必须强制清零 idx！
+    if (server->buf->len == 0) {
+        server->buf->idx = 0;
+    }
+
+    // 从远端 Socket 接收密文追加到 server->buf 尾部
     ssize_t r = recv(remote->fd, server->buf->data + server->buf->len, SOCKET_BUF_SIZE - server->buf->len, 0);
 
     if (r <= 0) {
         if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
-
         close_and_free_remote(EV_A_ remote);
         close_and_free_server(EV_A_ server);
         return;
@@ -719,70 +693,72 @@ static void remote_recv_cb(EV_P_ ev_io *w, int revents)
 
     server->buf->len += r;
 
+    metrics_inc_tcp_tx_bytes(r);
+
+    // AEAD 解密
+    errno = 0;
     int err = crypto->decrypt(server->buf, server->d_ctx, SOCKET_BUF_SIZE);
 
-    if (err == CRYPTO_NEED_MORE) {
-        return;
-    }
-
     if (err == CRYPTO_ERROR) {
-        ERROR("[redir] decrypt failed");
+        LOGE("[redir] AEAD decrypt failed");
         close_and_free_remote(EV_A_ remote);
         close_and_free_server(EV_A_ server);
         return;
     }
 
-    ssize_t s = send(server->fd, server->buf->data + server->buf->idx, server->buf->len, 0);
+    // 只有当解密出了有效明文（Server Hello等）才发送
+    if (server->buf->len > 0) {
+        ssize_t s = send(server->fd, server->buf->data + server->buf->idx, server->buf->len, 0);
 
-    if (s < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (s < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // 客户端写阻塞：暂停远端接收，开启客户端写事件
+                ev_io_stop(EV_A_ &ctx->io);
+                ev_io_start(EV_A_ &server->send_ctx->io);
+                return;
+            }
+            close_and_free_remote(EV_A_ remote);
+            close_and_free_server(EV_A_ server);
+            return;
+        }
+
+        if (s < server->buf->len) {
+            // 没发完：更新 idx 和 len，暂停远端接收，开启客户端写事件
+            server->buf->idx += s;
+            server->buf->len -= s;
             ev_io_stop(EV_A_ &ctx->io);
             ev_io_start(EV_A_ &server->send_ctx->io);
             return;
         }
 
-        close_and_free_remote(EV_A_ remote);
-        close_and_free_server(EV_A_ server);
-        return;
+        // 明文已全部成功发送给客户端，彻底重置 buffer
+        server->buf->len = 0;
+        server->buf->idx = 0;
     }
-
-    if (s < server->buf->len) {
-        server->buf->idx += s;
-        server->buf->len -= s;
-        ev_io_stop(EV_A_ &ctx->io);
-        ev_io_start(EV_A_ &server->send_ctx->io);
-        return;
-    }
-
-    server->buf->len = 0;
-    server->buf->idx = 0;
 }
 
 static void remote_send_cb(EV_P_ ev_io *w, int revents)
 {
     tcp_remote_ctx_t *ctx = (tcp_remote_ctx_t *)w;
     remote_t *remote = ctx->remote;
-
     if (remote == NULL) return;
-
     server_t *server = remote->server;
     if (server == NULL) return;
 
-    // 1. 处理非阻塞 TCP 连接成功事件
     if (!ctx->connected) {
         int err = 0;
         socklen_t len = sizeof(err);
-
         if (getsockopt(remote->fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err != 0) {
+            if (err != 0) errno = err;
+            ERROR("[redir] remote connect failed");
             handle_tcp_fail(EV_A_ server);
             return;
         }
-
         ctx->connected = 1;
-        ev_timer_stop(EV_A_ &ctx->watcher); // 停止连接超时定时器
+        ev_timer_stop(EV_A_ &ctx->watcher);
     }
 
-    // 2. 构造 Shadowsocks 头部 Header (只构造，不在此处单独加密)
+    // 构造并加密 Header（只在首包触发一次）
     if (!remote->fastopen_sent) {
         buffer_t abuf;
         memset(&abuf, 0, sizeof(abuf));
@@ -794,33 +770,29 @@ static void remote_send_cb(EV_P_ ev_io *w, int revents)
             handle_tcp_fail(EV_A_ server);
             return;
         }
-
         abuf.len = hlen;
 
-        // 将 Header 拼接到 remote->buf 头部，此时 remote->buf 中可能包含了 server_recv_cb 读到的原始数据
+        // 拼接 Header 到 remote->buf 前面
         bprepend(remote->buf, &abuf, SOCKET_BUF_SIZE);
         bfree(&abuf);
 
-        // 拼接完 Header 后，对其进行加密（此时包含 Header + 积压的数据）
+        // 加密 [Header + 积压的数据]
         int ret = crypto->encrypt(remote->buf, server->e_ctx, SOCKET_BUF_SIZE);
-        if (ret) {
+        if (ret != 0) {
             LOGE("[redir] encrypt header failed");
             handle_tcp_fail(EV_A_ server);
             return;
         }
-
         remote->fastopen_sent = 1;
     }
 
-    // 3. 发送 remote->buf 中的加密数据
     if (remote->buf->len > 0) {
         ssize_t s = send(remote->fd, remote->buf->data + remote->buf->idx, remote->buf->len, 0);
-
         if (s < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                ev_io_start(EV_A_ &ctx->io);
                 return;
             }
+            ERROR("[redir] remote send failed");
             handle_tcp_fail(EV_A_ server);
             return;
         }
@@ -829,19 +801,18 @@ static void remote_send_cb(EV_P_ ev_io *w, int revents)
         remote->buf->len -= s;
 
         if (remote->buf->len > 0) {
-            ev_io_start(EV_A_ &ctx->io);
             return;
         }
     }
 
-    // 数据发完，重置 buffer index
+    // 发送完毕，重置 buffer
     remote->buf->idx = 0;
     remote->buf->len = 0;
 
-    // 暂停 remote 的写事件，开启 remote 的读事件和 server 的读事件，进入正常双向转发
+    // 关掉远端写，开启双向读
     ev_io_stop(EV_A_ &ctx->io);
-    ev_io_start(EV_A_ &remote->recv_ctx->io);
-    ev_io_start(EV_A_ &server->recv_ctx->io);
+    if (remote->recv_ctx) ev_io_start(EV_A_ &remote->recv_ctx->io);
+    if (server->recv_ctx) ev_io_start(EV_A_ &server->recv_ctx->io);
 }
 
 static void remote_timeout_cb(EV_P_ ev_timer *watcher, int revents)
